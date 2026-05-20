@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets and local config
+.env
+.env.*
+*.env
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Generated data and caches
+.geo_cache/
+data.json
+instagram_profiles.json
+BrightScraper/api_cache/
+BrightScraper/debug_*.html
+BrightScraper/debug_*.png
+
+# Logs
+*.log

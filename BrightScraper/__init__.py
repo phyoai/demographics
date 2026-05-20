@@ -1,0 +1,2 @@
+"""BrightScraper package."""
+

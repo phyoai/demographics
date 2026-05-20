@@ -1,0 +1,12 @@
+.git
+.venv
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+data
+insta_dump
+experimental/__pycache__
+ig_scraper/__pycache__

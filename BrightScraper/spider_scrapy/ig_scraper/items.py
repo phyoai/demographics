@@ -1,0 +1,56 @@
+import scrapy
+
+
+class InstagramCommentItem(scrapy.Item):
+    comment_id = scrapy.Field()
+    username = scrapy.Field()
+    text = scrapy.Field()
+    published_at = scrapy.Field()
+    likes_text = scrapy.Field()
+    likes = scrapy.Field()
+    is_pinned = scrapy.Field()
+    reply_count = scrapy.Field()
+    owner_replied = scrapy.Field()
+    replies = scrapy.Field()
+    scraped_at = scrapy.Field()
+
+
+class InstagramProfileItem(scrapy.Item):
+    item_type = scrapy.Field()
+    username = scrapy.Field()
+    profile_url = scrapy.Field()
+    full_name = scrapy.Field()
+    bio = scrapy.Field()
+    external_url = scrapy.Field()
+    category = scrapy.Field()
+    is_verified = scrapy.Field()
+    followers_text = scrapy.Field()
+    following_text = scrapy.Field()
+    posts_text = scrapy.Field()
+    followers = scrapy.Field()
+    following = scrapy.Field()
+    posts = scrapy.Field()
+    profile_image_url = scrapy.Field()
+    recent_posts = scrapy.Field()
+    recent_reels = scrapy.Field()
+    scraped_at = scrapy.Field()
+
+
+class InstagramPostItem(scrapy.Item):
+    item_type = scrapy.Field()
+    username = scrapy.Field()
+    shortcode = scrapy.Field()
+    post_url = scrapy.Field()
+    post_type = scrapy.Field()
+    caption = scrapy.Field()
+    published_at = scrapy.Field()
+    likes_text = scrapy.Field()
+    likes = scrapy.Field()
+    comments_count_text = scrapy.Field()
+    comments_count = scrapy.Field()
+    views_text = scrapy.Field()
+    views = scrapy.Field()
+    thumbnails_or_media_urls = scrapy.Field()
+    owner_username = scrapy.Field()
+    comments = scrapy.Field()
+    scraped_at = scrapy.Field()
