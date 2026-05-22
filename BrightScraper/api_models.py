@@ -35,6 +35,15 @@ class SearchPayload(StrictModel):
 
 class CreatorSearchRequest(StrictModel):
     user_query: str
+    collection: str | None = None
+    collection_name: str | None = None
+    country: str | None = None
+    city: str | None = None
+    niche: str | None = None
+    niches: list[str] = Field(default_factory=list)
+    min_followers: int | None = Field(default=None, ge=0)
+    max_followers: int | None = Field(default=None, ge=0)
+    limit: int | None = Field(default=10, ge=1, le=100)
 
 
 class LocationLookupRequest(StrictModel):

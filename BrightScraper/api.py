@@ -573,8 +573,32 @@ async def creator_search(payload: CreatorSearchRequest) -> dict[str, Any]:
             detail="user_query is required",
         )
 
+    if (
+        payload.min_followers is not None
+        and payload.max_followers is not None
+        and payload.min_followers > payload.max_followers
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="min_followers must be less than or equal to max_followers",
+        )
+
+    niches = list(payload.niches)
+    if payload.niche:
+        niches.insert(0, payload.niche)
+
     try:
-        result = await asyncio.to_thread(run_creator_search_agent, user_query)
+        result = await asyncio.to_thread(
+            run_creator_search_agent,
+            user_query,
+            collection_name=payload.collection_name or payload.collection,
+            country=payload.country,
+            city=payload.city,
+            niches=niches,
+            min_followers=payload.min_followers,
+            max_followers=payload.max_followers,
+            limit=payload.limit,
+        )
         return {
             "user_query": user_query,
             "result": result,
