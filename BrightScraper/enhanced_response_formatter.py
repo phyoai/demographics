@@ -7,6 +7,15 @@ from collections import Counter, defaultdict
 from datetime import datetime
 import re
 
+try:
+    from .utils.niche_analyzer import NicheAnalyzer
+except ImportError:  # pragma: no cover
+    try:
+        from utils.niche_analyzer import NicheAnalyzer
+    except ImportError:  # pragma: no cover
+        NicheAnalyzer = None
+
+
 class EnhancedResponseFormatter:
     """Format analytics data to match Instagram Insights style"""
 
@@ -223,6 +232,45 @@ class EnhancedResponseFormatter:
             'female': normalized_female
         }
 
+    def extract_niche_analysis(self, profile_data, demographics, comments):
+        niche = demographics.get('niche_analysis')
+        if isinstance(niche, dict) and niche:
+            return niche
+
+        if NicheAnalyzer is None:
+            return {
+                'primary': None,
+                'secondary': [],
+                'distribution': [],
+                'topHashtags': [],
+                'topKeywords': [],
+                'contentTypes': [],
+                'brandFit': [],
+                'confidence': 'low',
+                'evidencePosts': 0,
+                'evidenceComments': 0,
+            }
+
+        try:
+            return NicheAnalyzer().analyze(
+                profile=profile_data,
+                posts=profile_data.get('posts', []),
+                comments=comments,
+            )
+        except Exception:
+            return {
+                'primary': None,
+                'secondary': [],
+                'distribution': [],
+                'topHashtags': [],
+                'topKeywords': [],
+                'contentTypes': [],
+                'brandFit': [],
+                'confidence': 'low',
+                'evidencePosts': 0,
+                'evidenceComments': 0,
+            }
+
     def format_enhanced_response(self, profile_data, demographics, comments):
         """
         Format complete analytics response in Instagram-style
@@ -239,6 +287,7 @@ class EnhancedResponseFormatter:
         city_dist = demographics.get('city_distribution', {})
         lang_dist = demographics.get('language_distribution', {})
         binary_gender = self.normalize_binary_gender(gender_dist)
+        niche_analysis = self.extract_niche_analysis(profile_data, demographics, comments)
 
         return {
             'profile': {
@@ -269,6 +318,7 @@ class EnhancedResponseFormatter:
                 'language': lang_dist,
                 'country': country_dist,
                 'city': city_dist,
+                'niche': niche_analysis,
                 'mostActiveTimes': time_activity,
                 'audienceQuality': {
                     'score': quality_score,

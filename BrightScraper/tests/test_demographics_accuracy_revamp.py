@@ -9,7 +9,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from BrightScraper.audience_analytics import AGE_BUCKETS, AudienceAnalytics
-from BrightScraper.utils.feature_extractor import FeatureExtractor
+from BrightScraper.utils.feature_extractor import FeatureExtractor, pycountry as feature_pycountry
 from BrightScraper.utils.ml_predictor import AudiencePredictor
 
 
@@ -127,6 +127,60 @@ class DemographicsAccuracyRevampTests(unittest.TestCase):
         self.assertTrue(any(value > 0.0 for value in age_dist.values()))
         self.assertTrue(result["demographics_meta"]["age"]["lowConfidenceReason"])
 
+    def test_fast_mode_caps_comment_analysis_with_sampling_metadata(self):
+        analytics = _build_analytics(age_confidence=0.8)
+
+        def _many_comments(self, posts, max_posts=8, followers=0, retry_summary=None, deadline_at=None, fast_mode=False):
+            comments = []
+            for idx in range(1000):
+                comments.append(
+                    {
+                        "username": f"user_{idx}",
+                        "text": f"nice post friend {idx}",
+                        "first_name": "Alex",
+                        "emoji_gender": {"male": 0, "female": 0},
+                        "gender_keywords": {"male": 0, "female": 0},
+                        "location_slang": {},
+                        "language": "en",
+                        "hour": 10,
+                        "full_name": "Alex Smith",
+                        "profile_pic_url": "",
+                        "is_bot": False,
+                        "likes_count": idx,
+                    }
+                )
+            return comments, {"status": "success", "warnings": [], "posts_scraped": 2, "target_comments": 1000}
+
+        analytics.scrape_all_comments = types.MethodType(_many_comments, analytics)
+        result = analytics.analyze_audience(
+            "demo_user",
+            max_posts=8,
+            fast_mode=True,
+            deadline_seconds=30,
+            analysis_max_comments=120,
+        )
+
+        sampling = result["demographics_meta"]["sample"]["commentSampling"]
+        self.assertEqual(result["total_comments_loaded"], 1000)
+        self.assertEqual(result["total_comments_analyzed"], 120)
+        self.assertTrue(sampling["sampled"])
+
+    def test_parallel_feature_extraction_preserves_comment_order(self):
+        analytics = AudienceAnalytics.__new__(AudienceAnalytics)
+        analytics.extractor = FeatureExtractor()
+        analytics.feature_extraction_workers = 2
+        analytics.feature_extraction_parallel_threshold = 1
+
+        comments = [
+            {"username": f"user_{idx}", "text": f"nice post friend {idx}"}
+            for idx in range(12)
+        ]
+
+        extracted, meta = analytics._extract_comment_features_many(comments)
+
+        self.assertTrue(meta["parallel"])
+        self.assertEqual([item["username"] for item in extracted], [item["username"] for item in comments])
+
     def test_feature_extractor_promotes_name_language_and_geo_signals(self):
         extractor = FeatureExtractor()
 
@@ -144,8 +198,47 @@ class DemographicsAccuracyRevampTests(unittest.TestCase):
         self.assertGreaterEqual(features["name_confidence"], 0.9)
         self.assertEqual(features["language"], "hi")
         self.assertIn("Delhi", features["city_mentions"])
+        self.assertIn("Delhi", features["state_mentions"])
         self.assertIn("India", features["country_mentions"])
         self.assertGreater(features["gender_signal_strength"], 0.9)
+
+    def test_feature_extractor_uses_state_and_pin_code_location_signals(self):
+        extractor = FeatureExtractor()
+
+        surat_features = extractor.extract_comment_features(
+            {
+                "username": "surat_foodie",
+                "text": "I'm from Surat, Gujarat 394210",
+            }
+        )
+        self.assertIn("Surat", surat_features["city_mentions"])
+        self.assertIn("Gujarat", surat_features["state_mentions"])
+        self.assertIn("India", surat_features["country_mentions"])
+        self.assertIn("394210", surat_features["postal_codes"])
+
+        narsinghpur_features = extractor.extract_comment_features(
+            {
+                "username": "rockongo",
+                "text": "Hello sir I'm from Narsinghpur Madhya Pradesh",
+            }
+        )
+        self.assertIn("Narsinghpur", narsinghpur_features["city_mentions"])
+        self.assertIn("Madhya Pradesh", narsinghpur_features["state_mentions"])
+        self.assertIn("India", narsinghpur_features["country_mentions"])
+
+    @unittest.skipUnless(feature_pycountry is not None, "pycountry is not installed")
+    def test_feature_extractor_uses_reference_countries_and_flags(self):
+        extractor = FeatureExtractor()
+
+        features = extractor.extract_comment_features(
+            {
+                "username": "traveller",
+                "text": "Dubai and Maldives trip 🇦🇪 🇲🇻",
+            }
+        )
+
+        self.assertIn("UAE", features["country_mentions"])
+        self.assertIn("Maldives", features["country_mentions"])
 
     def test_gender_keywords_ignore_creator_address_terms(self):
         extractor = FeatureExtractor()
@@ -194,12 +287,12 @@ class DemographicsAccuracyRevampTests(unittest.TestCase):
 
         def _location_comments(self, posts, max_posts=8, followers=0, retry_summary=None, deadline_at=None, fast_mode=False):
             comments = []
-            for idx in range(40):
+            for idx in range(200):
                 comments.append(
                     {
                         "username": f"priya_sharma_{idx}",
                         "full_name": "Priya Sharma",
-                        "text": "Bhai main Surat Gujarat India se hoon",
+                        "text": f"Bhai main Surat Gujarat India se hoon 394210 friend {idx}",
                         "is_bot": False,
                     }
                 )
@@ -213,6 +306,61 @@ class DemographicsAccuracyRevampTests(unittest.TestCase):
         self.assertIn("India", result["country_distribution"])
         self.assertGreater(result["country_distribution"]["India"], 35.0)
         self.assertEqual(result["language_distribution"].get("hi"), 100.0)
+        self.assertGreater(result["demographics_meta"]["location"]["explicitStateUsers"], 0)
+        self.assertGreater(result["demographics_meta"]["location"]["postalCodeSignals"], 0)
+
+    def test_post_caption_locations_are_added_without_replacing_old_city_logic(self):
+        analytics = _build_analytics(age_confidence=0.8)
+        analytics.extractor = FeatureExtractor()
+
+        def _caption_location_profile(self, username, retry_summary=None, deadline_at=None):
+            return {
+                "followers": 200000,
+                "posts_count": 2,
+                "posts": [
+                    {
+                        "url": "https://instagram.com/p/ahmedabad",
+                        "caption": "Navratri night in Ahmedabad Gujarat",
+                    },
+                    {
+                        "url": "https://instagram.com/p/family",
+                        "caption": "Family comedy reel for India audience",
+                    },
+                ],
+                "biography": "",
+                "avg_engagement": 0.047,
+                "full_name": "Demo User",
+                "is_verified": False,
+                "is_business_account": False,
+            }
+
+        def _neutral_comments(self, posts, max_posts=8, followers=0, retry_summary=None, deadline_at=None, fast_mode=False):
+            comments = []
+            for idx in range(40):
+                comments.append(
+                    {
+                        "username": f"viewer_{idx}",
+                        "full_name": f"Viewer {idx}",
+                        "text": f"nice post {idx}",
+                        "is_bot": False,
+                    }
+                )
+            return comments, {"status": "success", "warnings": [], "posts_scraped": 2, "target_comments": 40}
+
+        analytics.scrape_profile_and_posts = types.MethodType(_caption_location_profile, analytics)
+        analytics.scrape_all_comments = types.MethodType(_neutral_comments, analytics)
+
+        result = analytics.analyze_audience("demo_user", max_posts=8, fast_mode=False, deadline_seconds=30)
+
+        self.assertIn("Ahmedabad", result["city_distribution"])
+        self.assertIn("New York", result["city_distribution"])
+        self.assertGreater(result["demographics_meta"]["location"]["contentLocationSources"], 0)
+        self.assertGreater(result["demographics_meta"]["location"]["contentCitySignals"], 0)
+        self.assertIn(
+            "Festival and culture",
+            [item["label"] for item in result["niche_analysis"]["distribution"]],
+        )
+        self.assertGreater(result["demographics_meta"]["niche"]["evidencePosts"], 0)
 
     def test_low_confidence_gating_returns_unknown_or_empty_demographics(self):
         analytics = _build_analytics(age_confidence=0.22)

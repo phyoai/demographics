@@ -26,7 +26,8 @@ class DemographicsAnalyzeRequest(StrictModel):
     fast_mode: bool = True
     use_stored_data: bool = False
     deadline_seconds: int | None = None
-    max_posts: int | None = Field(default=None, ge=1, le=40)
+    max_posts: int | None = Field(default=None, ge=1, le=100)
+    max_comments: int | None = Field(default=None, ge=1, le=5000)
     mongodb_database: str | None = None
     mongodb_collection: str | None = None
 

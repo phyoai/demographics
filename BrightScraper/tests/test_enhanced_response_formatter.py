@@ -56,6 +56,35 @@ class EnhancedResponseFormatterTests(unittest.TestCase):
 
         self.assertEqual(result["analytics"]["gender"], {"male": 0, "female": 0})
 
+    def test_response_includes_niche_analysis(self):
+        formatter = EnhancedResponseFormatter()
+
+        result = formatter.format_enhanced_response(
+            profile_data={
+                "username": "demo",
+                "followers": 1000,
+                "posts": [
+                    {
+                        "post_type": "reel",
+                        "caption": "Family comedy reel for Navratri #comedy #family",
+                    }
+                ],
+            },
+            demographics={
+                "gender_distribution": {},
+                "age_distribution": {},
+                "country_distribution": {},
+                "city_distribution": {},
+                "language_distribution": {},
+            },
+            comments=[],
+        )
+
+        niche = result["analytics"]["niche"]
+        self.assertIsNotNone(niche["primary"])
+        self.assertTrue(niche["distribution"])
+        self.assertIn("brandFit", niche)
+
 
 if __name__ == "__main__":
     unittest.main()

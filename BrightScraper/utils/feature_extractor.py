@@ -71,13 +71,35 @@ CITY_ALIASES = {
     "Pune": ["pune"],
     "Kolkata": ["kolkata", "calcutta"],
     "Ahmedabad": ["ahmedabad"],
+    "Vadodara": ["vadodara", "baroda"],
+    "Rajkot": ["rajkot"],
     "Jaipur": ["jaipur"],
     "Lucknow": ["lucknow"],
     "Surat": ["surat"],
+    "Indore": ["indore"],
+    "Jabalpur": ["jabalpur"],
+    "Narsinghpur": ["narsinghpur", "narsimhapur"],
     "Patna": ["patna"],
+    "Cuttack": ["cuttack"],
+    "Bargarh": ["bargarh", "baragarh"],
     "Bhubaneswar": ["bhubaneswar", "odisha", "orissa"],
+    "Khairagarh": ["khairagarh"],
     "Raipur": ["raipur", "chhattisgarh"],
     "Bhopal": ["bhopal", "madhya pradesh", "mp"],
+    "Nagpur": ["nagpur"],
+    "Kanpur": ["kanpur"],
+    "Ludhiana": ["ludhiana"],
+    "Chandigarh": ["chandigarh"],
+    "Kochi": ["kochi", "cochin"],
+    "Thiruvananthapuram": ["thiruvananthapuram", "trivandrum"],
+    "Kozhikode": ["kozhikode", "calicut"],
+    "Mysore": ["mysore", "mysuru"],
+    "Mangalore": ["mangalore", "mangaluru"],
+    "Coimbatore": ["coimbatore"],
+    "Madurai": ["madurai"],
+    "Visakhapatnam": ["visakhapatnam", "vizag"],
+    "Vijayawada": ["vijayawada"],
+    "Nashik": ["nashik", "nasik"],
     "Karachi": ["karachi"],
     "Lahore": ["lahore"],
     "Islamabad": ["islamabad"],
@@ -103,13 +125,35 @@ CITY_TO_COUNTRY = {
     "Pune": "India",
     "Kolkata": "India",
     "Ahmedabad": "India",
+    "Vadodara": "India",
+    "Rajkot": "India",
     "Jaipur": "India",
     "Lucknow": "India",
     "Surat": "India",
+    "Indore": "India",
+    "Jabalpur": "India",
+    "Narsinghpur": "India",
     "Patna": "India",
+    "Cuttack": "India",
+    "Bargarh": "India",
     "Bhubaneswar": "India",
+    "Khairagarh": "India",
     "Raipur": "India",
     "Bhopal": "India",
+    "Nagpur": "India",
+    "Kanpur": "India",
+    "Ludhiana": "India",
+    "Chandigarh": "India",
+    "Kochi": "India",
+    "Thiruvananthapuram": "India",
+    "Kozhikode": "India",
+    "Mysore": "India",
+    "Mangalore": "India",
+    "Coimbatore": "India",
+    "Madurai": "India",
+    "Visakhapatnam": "India",
+    "Vijayawada": "India",
+    "Nashik": "India",
     "Karachi": "Pakistan",
     "Lahore": "Pakistan",
     "Islamabad": "Pakistan",
@@ -120,6 +164,90 @@ CITY_TO_COUNTRY = {
     "New York": "USA",
     "Los Angeles": "USA",
     "Singapore": "Singapore",
+}
+
+INDIAN_STATE_ALIASES = {
+    "Andhra Pradesh": ["andhra pradesh"],
+    "Assam": ["assam"],
+    "Bihar": ["bihar"],
+    "Chandigarh": ["chandigarh"],
+    "Chhattisgarh": ["chhattisgarh", "chattisgarh"],
+    "Delhi": ["delhi", "delhi ncr", "new delhi"],
+    "Goa": ["goa"],
+    "Gujarat": ["gujarat"],
+    "Haryana": ["haryana"],
+    "Himachal Pradesh": ["himachal pradesh", "himachal"],
+    "Jharkhand": ["jharkhand"],
+    "Karnataka": ["karnataka"],
+    "Kerala": ["kerala"],
+    "Madhya Pradesh": ["madhya pradesh", "mp"],
+    "Maharashtra": ["maharashtra"],
+    "Odisha": ["odisha", "orissa"],
+    "Punjab": ["punjab"],
+    "Rajasthan": ["rajasthan"],
+    "Tamil Nadu": ["tamil nadu"],
+    "Telangana": ["telangana"],
+    "Uttar Pradesh": ["uttar pradesh"],
+    "Uttarakhand": ["uttarakhand", "uttrakhand"],
+    "West Bengal": ["west bengal"],
+}
+
+# Selected high-signal Indian PIN prefixes. This is intentionally not a full
+# postal database; it only boosts locations when the prefix is distinctive.
+INDIAN_PIN_PREFIX_TO_LOCATION = {
+    "110": ("Delhi", "Delhi"),
+    "201": ("Noida", "Uttar Pradesh"),
+    "122": ("Gurugram", "Haryana"),
+    "400": ("Mumbai", "Maharashtra"),
+    "411": ("Pune", "Maharashtra"),
+    "422": ("Nashik", "Maharashtra"),
+    "440": ("Nagpur", "Maharashtra"),
+    "560": ("Bangalore", "Karnataka"),
+    "500": ("Hyderabad", "Telangana"),
+    "600": ("Chennai", "Tamil Nadu"),
+    "700": ("Kolkata", "West Bengal"),
+    "380": ("Ahmedabad", "Gujarat"),
+    "390": ("Vadodara", "Gujarat"),
+    "395": ("Surat", "Gujarat"),
+    "394": ("Surat", "Gujarat"),
+    "360": ("Rajkot", "Gujarat"),
+    "302": ("Jaipur", "Rajasthan"),
+    "226": ("Lucknow", "Uttar Pradesh"),
+    "208": ("Kanpur", "Uttar Pradesh"),
+    "800": ("Patna", "Bihar"),
+    "751": ("Bhubaneswar", "Odisha"),
+    "768": ("Bargarh", "Odisha"),
+    "487": ("Narsinghpur", "Madhya Pradesh"),
+    "491": ("Khairagarh", "Chhattisgarh"),
+    "462": ("Bhopal", "Madhya Pradesh"),
+    "452": ("Indore", "Madhya Pradesh"),
+    "141": ("Ludhiana", "Punjab"),
+    "160": ("Chandigarh", "Chandigarh"),
+    "682": ("Kochi", "Kerala"),
+    "695": ("Thiruvananthapuram", "Kerala"),
+    "673": ("Kozhikode", "Kerala"),
+    "570": ("Mysore", "Karnataka"),
+    "575": ("Mangalore", "Karnataka"),
+    "641": ("Coimbatore", "Tamil Nadu"),
+    "625": ("Madurai", "Tamil Nadu"),
+    "530": ("Visakhapatnam", "Andhra Pradesh"),
+    "520": ("Vijayawada", "Andhra Pradesh"),
+}
+
+INDIAN_PIN_CONTEXT_WORDS = {
+    "from",
+    "in",
+    "city",
+    "district",
+    "jila",
+    "zilla",
+    "village",
+    "area",
+    "address",
+    "pin",
+    "pincode",
+    "postal",
+    "se",
 }
 
 COUNTRY_ALIASES = {
@@ -133,6 +261,93 @@ COUNTRY_ALIASES = {
     "Australia": ["australia", "aussie"],
     "Singapore": ["singapore"],
 }
+
+COUNTRY_CANONICAL_OVERRIDES = {
+    "united states": "USA",
+    "united states of america": "USA",
+    "united kingdom": "UK",
+    "united kingdom of great britain and northern ireland": "UK",
+    "united arab emirates": "UAE",
+}
+
+COUNTRY_ALIAS_SKIP_WORDS = {
+    "and",
+    "of",
+    "the",
+    "republic",
+    "state",
+    "states",
+    "island",
+    "islands",
+}
+
+
+def _canonical_country_name(value):
+    if not value:
+        return None
+
+    candidate = str(value).strip()
+    if not candidate:
+        return None
+
+    candidate_lower = candidate.lower()
+    override = COUNTRY_CANONICAL_OVERRIDES.get(candidate_lower)
+    if override:
+        return override
+
+    for country, aliases in COUNTRY_ALIASES.items():
+        if candidate_lower == country.lower() or candidate_lower in aliases:
+            return country
+
+    if pycountry is not None:
+        try:
+            country = pycountry.countries.lookup(candidate)
+            normalized = COUNTRY_CANONICAL_OVERRIDES.get(country.name.lower())
+            return normalized or country.name
+        except LookupError:
+            pass
+
+    return candidate
+
+
+def _build_reference_country_aliases():
+    aliases_by_country = {}
+
+    if pycountry is None:
+        return aliases_by_country
+
+    for country in pycountry.countries:
+        canonical = _canonical_country_name(country.name)
+        if not canonical:
+            continue
+
+        aliases = aliases_by_country.setdefault(canonical, set())
+        for attr in ("name", "official_name", "common_name"):
+            value = getattr(country, attr, None)
+            if not value:
+                continue
+            normalized = str(value).strip().lower()
+            if len(normalized) <= 3 or normalized in COUNTRY_ALIAS_SKIP_WORDS:
+                continue
+            aliases.add(normalized)
+
+    return {
+        country: sorted(aliases, key=len, reverse=True)
+        for country, aliases in aliases_by_country.items()
+        if aliases
+    }
+
+
+REFERENCE_COUNTRY_ALIASES = _build_reference_country_aliases()
+REFERENCE_COUNTRY_ALIAS_LOOKUP = {
+    alias: country
+    for country, aliases in REFERENCE_COUNTRY_ALIASES.items()
+    for alias in aliases
+}
+REFERENCE_COUNTRY_MAX_ALIAS_WORDS = max(
+    (len(alias.split()) for alias in REFERENCE_COUNTRY_ALIAS_LOOKUP),
+    default=1,
+)
 
 HINGLISH_WORDS = {
     "bhai",
@@ -173,7 +388,7 @@ class FeatureExtractor:
     """Extract features from Instagram data"""
     
     def __init__(self):
-        pass
+        self._language_details_cache = {}
 
     @staticmethod
     def clean_text(text):
@@ -314,14 +529,84 @@ class FeatureExtractor:
         if len(text_clean) < 8:
             return {"language": "unknown", "confidence": 0.0, "candidates": []}
 
+        cache_key = text_clean.lower()[:500]
+        language_cache = getattr(self, "_language_details_cache", None)
+        if isinstance(language_cache, dict) and cache_key in language_cache:
+            return language_cache[cache_key]
+
         text_lower = text_clean.lower()
         hinglish_hits = sum(1 for word in HINGLISH_WORDS if self._contains_phrase(text_lower, word))
         if hinglish_hits >= 2:
-            return {
+            result = {
                 "language": "hi",
                 "confidence": min(0.95, 0.55 + hinglish_hits * 0.08),
                 "candidates": [{"language": "hi", "confidence": min(0.95, 0.55 + hinglish_hits * 0.08)}],
             }
+            if isinstance(language_cache, dict):
+                language_cache[cache_key] = result
+            return result
+
+        script_language_hints = [
+            (r"[\u0900-\u097F]", "hi"),
+            (r"[\u0A80-\u0AFF]", "gu"),
+            (r"[\u0980-\u09FF]", "bn"),
+            (r"[\u0B80-\u0BFF]", "ta"),
+            (r"[\u0C00-\u0C7F]", "te"),
+            (r"[\u0C80-\u0CFF]", "kn"),
+            (r"[\u0D00-\u0D7F]", "ml"),
+        ]
+        for pattern, language in script_language_hints:
+            if re.search(pattern, text_clean):
+                result = {
+                    "language": language,
+                    "confidence": 0.78,
+                    "candidates": [{"language": language, "confidence": 0.78}],
+                }
+                if isinstance(language_cache, dict):
+                    language_cache[cache_key] = result
+                return result
+
+        ascii_words = re.findall(r"[a-z]+", text_lower)
+        is_ascii_text = all(ord(char) < 128 for char in text_clean)
+        common_reaction_words = {
+            "amazing",
+            "awesome",
+            "beautiful",
+            "best",
+            "cute",
+            "friend",
+            "funny",
+            "good",
+            "great",
+            "haha",
+            "hahaha",
+            "hilarious",
+            "lol",
+            "love",
+            "nice",
+            "ok",
+            "post",
+            "same",
+            "super",
+            "true",
+            "video",
+            "wow",
+            "yes",
+        }
+        if (
+            is_ascii_text
+            and len(text_clean) < 32
+            and ascii_words
+            and all(word in common_reaction_words or word.isdigit() for word in ascii_words)
+        ):
+            result = {
+                "language": "en",
+                "confidence": 0.45,
+                "candidates": [{"language": "en", "confidence": 0.45}],
+            }
+            if isinstance(language_cache, dict):
+                language_cache[cache_key] = result
+            return result
 
         try:
             detected_candidates = detect_langs(text_clean)
@@ -339,13 +624,19 @@ class FeatureExtractor:
         confidence = candidates[0]["confidence"]
         common_short_text_false_positives = {"so", "vi", "pl", "fi", "nl", "da", "no", "sv", "sq", "ca", "id", "tl", "cy"}
         if detected in common_short_text_false_positives and len(text_clean) < 24 and confidence < 0.92:
-            return {
+            result = {
                 "language": "en",
                 "confidence": 0.45,
                 "candidates": candidates,
             }
+            if isinstance(language_cache, dict):
+                language_cache[cache_key] = result
+            return result
 
-        return {"language": detected, "confidence": confidence, "candidates": candidates}
+        result = {"language": detected, "confidence": confidence, "candidates": candidates}
+        if isinstance(language_cache, dict):
+            language_cache[cache_key] = result
+        return result
 
     def detect_language(self, text):
         """Detect language of text."""
@@ -389,13 +680,123 @@ class FeatureExtractor:
         language = detected.get("language", "unknown")
         return LANGUAGE_NORMALIZATION.get(language, language)
 
-    def extract_geo_mentions(self, text):
+    def _has_postal_location_context(self, text_lower):
+        if any(self._contains_phrase(text_lower, word) for word in INDIAN_PIN_CONTEXT_WORDS):
+            return True
+
+        for aliases in CITY_ALIASES.values():
+            if any(self._contains_phrase(text_lower, alias) for alias in aliases):
+                return True
+
+        for aliases in INDIAN_STATE_ALIASES.values():
+            if any(self._contains_phrase(text_lower, alias) for alias in aliases):
+                return True
+
+        return False
+
+    def extract_postal_location_mentions(self, text):
         text_lower = self.clean_text(text).lower()
         city_counts = Counter()
+        state_counts = Counter()
+        country_counts = Counter()
+        postal_codes = []
+
+        if not text_lower:
+            return {"cities": {}, "states": {}, "countries": {}, "postal_codes": []}
+
+        codes = re.findall(r"(?<!\d)([1-9]\d{5})(?!\d)", text_lower)
+        if not codes:
+            return {"cities": {}, "states": {}, "countries": {}, "postal_codes": []}
+
+        has_location_context = self._has_postal_location_context(text_lower)
+        for code in codes:
+            match = INDIAN_PIN_PREFIX_TO_LOCATION.get(code[:3])
+            if not match:
+                continue
+
+            postal_codes.append(code)
+            if not has_location_context:
+                continue
+
+            city, state = match
+            city_counts[city] += 1
+            state_counts[state] += 1
+            country_counts["India"] += 1
+
+        return {
+            "cities": dict(city_counts),
+            "states": dict(state_counts),
+            "countries": dict(country_counts),
+            "postal_codes": postal_codes,
+        }
+
+    @staticmethod
+    def extract_flag_country_mentions(text):
+        countries = Counter()
+        if not text:
+            return countries
+
+        regional_indicators = []
+        for char in str(text):
+            codepoint = ord(char)
+            if 0x1F1E6 <= codepoint <= 0x1F1FF:
+                regional_indicators.append(chr(ord("A") + codepoint - 0x1F1E6))
+            else:
+                if len(regional_indicators) >= 2:
+                    country_code = "".join(regional_indicators[-2:])
+                    if pycountry is not None:
+                        try:
+                            country = pycountry.countries.lookup(country_code)
+                            canonical = _canonical_country_name(country.name)
+                            if canonical:
+                                countries[canonical] += 1
+                        except LookupError:
+                            pass
+                regional_indicators = []
+
+        if len(regional_indicators) >= 2:
+            country_code = "".join(regional_indicators[-2:])
+            if pycountry is not None:
+                try:
+                    country = pycountry.countries.lookup(country_code)
+                    canonical = _canonical_country_name(country.name)
+                    if canonical:
+                        countries[canonical] += 1
+                except LookupError:
+                    pass
+
+        return countries
+
+    def extract_reference_country_mentions(self, text):
+        text_lower = self.clean_text(text).lower()
         country_counts = Counter()
 
         if not text_lower:
-            return {"cities": {}, "countries": {}}
+            return country_counts
+
+        tokens = re.findall(r"[a-z][a-z.'-]*", text_lower)
+        if not tokens:
+            return country_counts
+
+        max_words = min(REFERENCE_COUNTRY_MAX_ALIAS_WORDS, len(tokens))
+        for size in range(1, max_words + 1):
+            for start in range(0, len(tokens) - size + 1):
+                phrase = " ".join(tokens[start:start + size])
+                country = REFERENCE_COUNTRY_ALIAS_LOOKUP.get(phrase)
+                if country:
+                    country_counts[country] += 1
+
+        return country_counts
+
+    def extract_geo_mentions(self, text):
+        text_lower = self.clean_text(text).lower()
+        city_counts = Counter()
+        state_counts = Counter()
+        country_counts = Counter()
+        postal_codes = []
+
+        if not text_lower:
+            return {"cities": {}, "states": {}, "countries": {}, "postal_codes": []}
 
         for city, aliases in CITY_ALIASES.items():
             for alias in aliases:
@@ -406,6 +807,14 @@ class FeatureExtractor:
                         country_counts[country] += 1
                     break
 
+        for state, aliases in INDIAN_STATE_ALIASES.items():
+            for alias in aliases:
+                if self._contains_phrase(text_lower, alias):
+                    state_counts[state] += 1
+                    if country_counts.get("India", 0) <= 0:
+                        country_counts["India"] += 1
+                    break
+
         for country, aliases in COUNTRY_ALIASES.items():
             for alias in aliases:
                 if self._contains_phrase(text_lower, alias):
@@ -413,9 +822,31 @@ class FeatureExtractor:
                     country_counts[normalized_country] += 1
                     break
 
+        for country, count in self.extract_reference_country_mentions(text_lower).items():
+            if country_counts.get(country, 0) <= 0:
+                country_counts[country] += count
+
+        for country, count in self.extract_flag_country_mentions(text).items():
+            if country_counts.get(country, 0) <= 0:
+                country_counts[country] += count
+
+        postal_mentions = self.extract_postal_location_mentions(text_lower)
+        for city, count in postal_mentions["cities"].items():
+            if city_counts.get(city, 0) <= 0:
+                city_counts[city] += count
+        for state, count in postal_mentions["states"].items():
+            if state_counts.get(state, 0) <= 0:
+                state_counts[state] += count
+        for country, count in postal_mentions["countries"].items():
+            if country_counts.get(country, 0) <= 0:
+                country_counts[country] += count
+        postal_codes.extend(postal_mentions["postal_codes"])
+
         return {
             "cities": dict(city_counts),
+            "states": dict(state_counts),
             "countries": dict(country_counts),
+            "postal_codes": postal_codes,
         }
 
     @staticmethod
@@ -427,18 +858,7 @@ class FeatureExtractor:
         if not candidate:
             return None
 
-        if pycountry is not None:
-            try:
-                country = pycountry.countries.lookup(candidate)
-                return country.name
-            except LookupError:
-                pass
-
-        candidate_lower = candidate.lower()
-        for country, aliases in COUNTRY_ALIASES.items():
-            if candidate_lower == country.lower() or candidate_lower in aliases:
-                return country
-        return candidate
+        return _canonical_country_name(candidate)
     
     def count_username_digits(self, username):
         """Count number of digits in username (bot indicator)"""
@@ -639,7 +1059,9 @@ class FeatureExtractor:
             'spam_score': spam_score,
             'location_slang': location_slang,
             'city_mentions': geo_mentions['cities'],
+            'state_mentions': geo_mentions['states'],
             'country_mentions': geo_mentions['countries'],
+            'postal_codes': geo_mentions['postal_codes'],
             'emoji_gender': emoji_gender,
             'gender_keywords': gender_keywords,
             'gender_signal_strength': gender_signal_strength,

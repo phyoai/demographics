@@ -445,16 +445,27 @@ async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) ->
     )
 
     max_posts = request.max_posts if request.max_posts is not None else default_max_posts
+    max_comments = request.max_comments
 
     if use_stored_data and mode != "async":
         try:
-            envelope, http_status = await asyncio.to_thread(
-                execute_stored_analysis_pipeline,
-                username,
-                deadline_seconds,
-                fast_mode,
-                **stored_source_kwargs,
-            )
+            if max_comments is None:
+                envelope, http_status = await asyncio.to_thread(
+                    execute_stored_analysis_pipeline,
+                    username,
+                    deadline_seconds,
+                    fast_mode,
+                    **stored_source_kwargs,
+                )
+            else:
+                envelope, http_status = await asyncio.to_thread(
+                    execute_stored_analysis_pipeline,
+                    username,
+                    deadline_seconds,
+                    fast_mode,
+                    max_comments=max_comments,
+                    **stored_source_kwargs,
+                )
         except Exception as exc:
             error_envelope, http_status = build_error_envelope(exc, username=username)
             return JSONResponse(status_code=http_status, content=error_envelope)
@@ -496,6 +507,7 @@ async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) ->
                 "username": username,
                 "mode": "async",
                 "max_posts": max_posts,
+                "max_comments": max_comments,
                 "deadline_seconds": deadline_seconds,
                 "fast_mode": fast_mode,
                 "use_stored_data": use_stored_data,
@@ -511,6 +523,7 @@ async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) ->
                 max_posts,
                 deadline_seconds,
                 fast_mode,
+                max_comments,
                 use_stored_data,
                 stored_source_kwargs.get("database_name"),
                 stored_source_kwargs.get("collection_name"),
@@ -533,13 +546,23 @@ async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) ->
         )
 
     try:
-        envelope, http_status = await asyncio.to_thread(
-            execute_analysis_pipeline,
-            username,
-            max_posts,
-            deadline_seconds,
-            fast_mode,
-        )
+        if max_comments is None:
+            envelope, http_status = await asyncio.to_thread(
+                execute_analysis_pipeline,
+                username,
+                max_posts,
+                deadline_seconds,
+                fast_mode,
+            )
+        else:
+            envelope, http_status = await asyncio.to_thread(
+                execute_analysis_pipeline,
+                username,
+                max_posts,
+                deadline_seconds,
+                fast_mode,
+                max_comments,
+            )
     except Exception as exc:
         error_envelope, http_status = build_error_envelope(exc, username=username)
         return JSONResponse(status_code=http_status, content=error_envelope)
