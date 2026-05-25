@@ -7,6 +7,15 @@ from collections import Counter, defaultdict
 from datetime import datetime
 import re
 
+try:
+    from .utils.niche_analyzer import NicheAnalyzer
+except ImportError:  # pragma: no cover
+    try:
+        from utils.niche_analyzer import NicheAnalyzer
+    except ImportError:  # pragma: no cover
+        NicheAnalyzer = None
+
+
 class EnhancedResponseFormatter:
     """Format analytics data to match Instagram Insights style"""
 
@@ -201,6 +210,67 @@ class EnhancedResponseFormatter:
 
         return min(100, max(20, quality_score))
 
+    def normalize_binary_gender(self, gender_dist):
+        """
+        Return frontend gender percentages normalized across male/female only.
+        Raw analytics can keep unknown separately, but this visible pair should sum to 100.
+        """
+        try:
+            male = max(0.0, float(gender_dist.get('male', 0) or 0))
+            female = max(0.0, float(gender_dist.get('female', 0) or 0))
+        except (TypeError, ValueError):
+            return {'male': 0, 'female': 0}
+
+        total = male + female
+        if total <= 0:
+            return {'male': 0, 'female': 0}
+
+        normalized_male = round((male / total) * 100, 1)
+        normalized_female = round(100.0 - normalized_male, 1)
+        return {
+            'male': normalized_male,
+            'female': normalized_female
+        }
+
+    def extract_niche_analysis(self, profile_data, demographics, comments):
+        niche = demographics.get('niche_analysis')
+        if isinstance(niche, dict) and niche:
+            return niche
+
+        if NicheAnalyzer is None:
+            return {
+                'primary': None,
+                'secondary': [],
+                'distribution': [],
+                'topHashtags': [],
+                'topKeywords': [],
+                'contentTypes': [],
+                'brandFit': [],
+                'confidence': 'low',
+                'evidencePosts': 0,
+                'evidenceComments': 0,
+            }
+
+        try:
+            return NicheAnalyzer().analyze(
+                profile=profile_data,
+                posts=profile_data.get('posts', []),
+                comments=comments,
+            )
+        except Exception:
+            return {
+                'primary': None,
+                'secondary': [],
+                'distribution': [],
+                'topHashtags': [],
+                'topKeywords': [],
+                'contentTypes': [],
+                'brandFit': [],
+                'confidence': 'low',
+                'evidencePosts': 0,
+                'evidenceComments': 0,
+            }
+
     def format_enhanced_response(self, profile_data, demographics, comments):
         """
         Format complete analytics response in Instagram-style
@@ -216,6 +286,8 @@ class EnhancedResponseFormatter:
         country_dist = demographics.get('country_distribution', {})
         city_dist = demographics.get('city_distribution', {})
         lang_dist = demographics.get('language_distribution', {})
+        binary_gender = self.normalize_binary_gender(gender_dist)
+        niche_analysis = self.extract_niche_analysis(profile_data, demographics, comments)
 
         return {
             'profile': {
@@ -242,13 +314,11 @@ class EnhancedResponseFormatter:
                     '55-64': age_dist.get('55-64', 0),
                     '65+': age_dist.get('65+', 0)
                 },
-                'gender': {
-                    'male': gender_dist.get('male', 0),
-                    'female': gender_dist.get('female', 0)
-                },
+                'gender': binary_gender,
                 'language': lang_dist,
                 'country': country_dist,
                 'city': city_dist,
+                'niche': niche_analysis,
                 'mostActiveTimes': time_activity,
                 'audienceQuality': {
                     'score': quality_score,

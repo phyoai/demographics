@@ -496,6 +496,7 @@ def execute_analysis_pipeline(
     max_posts: int,
     deadline_seconds: int,
     fast_mode: bool,
+    max_comments: int | None = None,
 ) -> tuple[dict[str, Any], int]:
     started_at = time.monotonic()
     engine = create_analytics_engine()
@@ -504,6 +505,7 @@ def execute_analysis_pipeline(
         max_posts=max_posts,
         deadline_seconds=deadline_seconds,
         fast_mode=fast_mode,
+        analysis_max_comments=max_comments,
     )
 
     enhanced_result = response_formatter.format_enhanced_response(
@@ -538,6 +540,7 @@ def execute_stored_analysis_pipeline(
     deadline_seconds: int,
     fast_mode: bool,
     *,
+    max_comments: int | None = None,
     database_name: str | None = None,
     collection_name: str | None = None,
 ) -> tuple[dict[str, Any], int]:
@@ -565,7 +568,8 @@ def execute_stored_analysis_pipeline(
         max_posts=max(1, len(posts)),
         deadline_seconds=deadline_seconds,
         fast_mode=fast_mode,
-        limit_age_source=False,
+        limit_age_source=True,
+        analysis_max_comments=max_comments,
     )
 
     enhanced_result = response_formatter.format_enhanced_response(
@@ -592,7 +596,13 @@ def execute_stored_analysis_pipeline(
         "stored_data": {
             **stored_meta,
             "used_all_posts": True,
-            "used_all_stored_comments": True,
+            "used_all_stored_comments": not (
+                raw_result.get("demographics_meta", {})
+                .get("sample", {})
+                .get("commentSampling", {})
+                .get("sampled", False)
+            ),
+            "comments_analyzed": raw_result.get("total_comments_analyzed", 0),
         },
         "saved_to_file": None,
     }
@@ -679,6 +689,7 @@ async def run_analyze_job(
     max_posts: int,
     deadline_seconds: int,
     fast_mode: bool,
+    max_comments: int | None = None,
     use_stored_data: bool = False,
     database_name: str | None = None,
     collection_name: str | None = None,
@@ -692,6 +703,7 @@ async def run_analyze_job(
                 username,
                 deadline_seconds,
                 fast_mode,
+                max_comments=max_comments,
                 database_name=database_name,
                 collection_name=collection_name,
             )
@@ -702,6 +714,7 @@ async def run_analyze_job(
                 max_posts,
                 deadline_seconds,
                 fast_mode,
+                max_comments,
             )
             save_analyze_cache_to_db(username, result)
             save_analyze_cache(username, result)
