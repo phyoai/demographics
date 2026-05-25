@@ -20,6 +20,8 @@ class DemographicsApiTests(unittest.TestCase):
         cls.import_error = None
         cls._injected_modules: list[str] = []
         os.environ["PHYO_SERVER_API_KEY"] = "test-api-key"
+        os.environ["ANALYZE_DEFAULT_DEADLINE_SECONDS"] = "30"
+        os.environ["LOGFIRE_DISABLED"] = "true"
 
         def inject_module(name: str, module):
             if name not in sys.modules:
@@ -274,6 +276,154 @@ class DemographicsApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         execute_stored_mock.assert_called_once_with("demo", 30, False)
+
+    def test_profiles_scrape_uses_stored_mongo_source_without_api_key(self):
+        stored_payload = {
+            "success": True,
+            "status": "success",
+            "error_code": None,
+            "warnings": [],
+            "timings": {"total_seconds": 0.2},
+            "retry_summary": {},
+            "data": {"profile": {"username": "therajivmakhni"}},
+            "stored_data": {
+                "db": "instagpy",
+                "collection": "instagram_scrapes",
+                "posts_loaded": 30,
+                "posts_used_for_comments": 30,
+                "comments_loaded": 925,
+                "used_all_posts": True,
+                "used_all_stored_comments": True,
+            },
+            "saved_to_file": None,
+        }
+
+        with patch.object(
+            self.api_module,
+            "execute_stored_analysis_pipeline",
+            return_value=(stored_payload, 200),
+        ) as execute_stored_mock:
+            response = self.client.post(
+                "/profiles/scrape",
+                json={
+                    "username": "therajivmakhni",
+                    "max_posts": 30,
+                    "max_comments": 50,
+                    "post_workers": 2,
+                    "force_refresh": True,
+                    "mongodb_database": "instagpy",
+                    "mongodb_collection": "instagram_scrapes",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["cache"]["source"], "stored_data")
+        self.assertEqual(payload["profile_scrape_request"]["mongodb_database"], "instagpy")
+        self.assertEqual(payload["profile_scrape_request"]["mongodb_collection"], "instagram_scrapes")
+        self.assertFalse(payload["profile_scrape_request"]["fast_mode"])
+        self.assertTrue(payload["profile_scrape_request"]["used_all_stored_posts_and_comments"])
+        self.assertIn("Stored-data analysis used all posts", " ".join(payload["warnings"]))
+        execute_stored_mock.assert_called_once_with(
+            "therajivmakhni",
+            30,
+            False,
+            database_name="instagpy",
+            collection_name="instagram_scrapes",
+        )
+
+    def test_profiles_scrape_rejects_blank_username(self):
+        response = self.client.post("/profiles/scrape", json={"username": "   "})
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json()["detail"],
+            "Provide at least one username via 'username' or 'usernames'.",
+        )
+
+    def test_stored_scrape_normalization_uses_all_posts_and_comments(self):
+        service_module = sys.modules["BrightScraper.services.demographics_analysis_service"]
+        scrape_doc = {
+            "_id": "stored-id",
+            "requested_username": "demo",
+            "result": {
+                "profile": {
+                    "username": "demo",
+                    "full_name": "Demo User",
+                    "bio": "Tech creator",
+                    "followers_count": "1,200",
+                    "following_count": 50,
+                    "posts_count": 2,
+                    "profile_pic_url": "https://example.com/profile.jpg",
+                },
+                "posts": [
+                    {
+                        "post_url": "https://instagram.com/p/one",
+                        "shortcode": "one",
+                        "post_type": "reel",
+                        "caption": "Hello #tech",
+                        "likes_count": "100",
+                        "comments_count_total": 2,
+                        "posted_at": "2026-05-24T05:06:06.000Z",
+                        "comments": [
+                            {
+                                "username": "alice",
+                                "text": "Great from Delhi",
+                                "posted_at": "2026-05-24T06:00:00.000Z",
+                                "likes_count": 3,
+                                "profile_pic_url": "https://example.com/alice.jpg",
+                            },
+                            {
+                                "user": {
+                                    "username": "bob",
+                                    "full_name": "Bob Smith",
+                                    "profile_pic_url": "https://example.com/bob.jpg",
+                                },
+                                "comment_text": "Nice",
+                                "created_at": "2026-05-24T06:10:00.000Z",
+                                "likes": "4",
+                            },
+                        ],
+                    },
+                    {
+                        "post_url": "https://instagram.com/p/two",
+                        "shortcode": "two",
+                        "post_type": "post",
+                        "likes_count": 25,
+                        "comments_count_total": 1,
+                        "comments": [
+                            {
+                                "commenter_username": "carol",
+                                "body": "Mumbai vibes",
+                                "likes_count": 1,
+                            }
+                        ],
+                    },
+                ],
+            },
+        }
+
+        profile, posts, comments, meta = service_module.build_stored_analysis_inputs(
+            scrape_doc,
+            "demo",
+            database_name="instagpy",
+            collection_name="instagram_scrapes",
+        )
+
+        self.assertEqual(profile["followers"], 1200)
+        self.assertEqual(profile["biography"], "Tech creator")
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(len(comments), 3)
+        self.assertEqual(comments[0]["post_url"], "https://instagram.com/p/one")
+        self.assertEqual(comments[0]["profile_pic_url"], "https://example.com/alice.jpg")
+        self.assertEqual(comments[1]["username"], "bob")
+        self.assertEqual(comments[1]["full_name"], "Bob Smith")
+        self.assertEqual(comments[2]["likes"], 1)
+        self.assertEqual(meta["posts_loaded"], 2)
+        self.assertEqual(meta["posts_used_for_comments"], 2)
+        self.assertEqual(meta["comments_loaded"], 3)
+        self.assertEqual(meta["db"], "instagpy")
+        self.assertEqual(meta["collection"], "instagram_scrapes")
 
     def test_async_analyze_queues_job(self):
         def fake_create_task(coro):

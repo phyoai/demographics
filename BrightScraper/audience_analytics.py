@@ -56,6 +56,11 @@ USE_CACHE = os.getenv("USE_CACHE", "True").lower() == "true"
 # Enable/disable AI predictions (GPT)
 USE_AI_PREDICTIONS = os.getenv("USE_AI_PREDICTIONS", "False").lower() == "true"
 
+AGE_BUCKETS = ("13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+")
+LOW_AGE_CONFIDENCE_THRESHOLD = 0.32
+MIN_DEMOGRAPHIC_SIGNAL_USERS = 5
+MIN_AGE_FALLBACK_SAMPLE_USERS = 30
+
 
 def build_ai_predictor(use_ai: bool):
     if not use_ai:
@@ -107,6 +112,63 @@ class AudienceAnalytics:
     @staticmethod
     def _elapsed(started_at: float) -> float:
         return round(time.monotonic() - started_at, 3)
+
+    @staticmethod
+    def _normalize_age_distribution(
+        age_distribution: Dict[str, Any],
+        confidence: float,
+        sample_size: int = 0,
+    ) -> Dict[str, float]:
+        normalized = {bucket: 0.0 for bucket in AGE_BUCKETS}
+        if not isinstance(age_distribution, dict):
+            return normalized
+        if confidence < LOW_AGE_CONFIDENCE_THRESHOLD and sample_size < MIN_AGE_FALLBACK_SAMPLE_USERS:
+            return normalized
+
+        for raw_bucket, raw_value in age_distribution.items():
+            try:
+                value = max(0.0, float(raw_value))
+            except (TypeError, ValueError):
+                continue
+
+            bucket = str(raw_bucket)
+            if bucket in normalized:
+                normalized[bucket] += value
+            elif bucket == "45+":
+                normalized["45-54"] += value * 0.7
+                normalized["55-64"] += value * 0.2
+                normalized["65+"] += value * 0.1
+
+        total = sum(normalized.values())
+        if total <= 0:
+            return normalized
+
+        normalized = {bucket: round((value / total) * 100, 1) for bucket, value in normalized.items()}
+        rounding_delta = round(100.0 - sum(normalized.values()), 1)
+        if rounding_delta and normalized:
+            largest_bucket = max(normalized, key=normalized.get)
+            normalized[largest_bucket] = round(normalized[largest_bucket] + rounding_delta, 1)
+        return normalized
+
+    @staticmethod
+    def _low_location_signal_reason(
+        *,
+        real_user_count: int,
+        geotags: List[str],
+        location_slang: Counter,
+        languages: List[str],
+    ) -> str:
+        known_languages = [lang for lang in languages if lang and lang != "unknown"]
+        slang_signal_count = sum(score for score in location_slang.values() if score > 0)
+
+        if (
+            real_user_count < MIN_DEMOGRAPHIC_SIGNAL_USERS
+            and not geotags
+            and slang_signal_count <= 0
+            and not known_languages
+        ):
+            return "Insufficient reliable location signals in stored comments and posts."
+        return ""
 
     def get_snapshot_data(
         self,
@@ -417,11 +479,17 @@ class AudienceAnalytics:
         country_dist: Dict[str, float] = {"India": 70.0}
         city_dist: Dict[str, float] = {}
         language_dist: Dict[str, float] = {"en": 60, "hi": 30, "ml": 10}
+        languages: List[str] = []
+        geotags: List[str] = []
+        all_slang: Counter = Counter()
+        all_usernames: List[str] = []
+        all_full_names: List[str] = []
         age_metadata: Dict[str, Any] = {
             "confidence": 0.25,
             "method": "fallback demographics (no user predictions)",
             "total_users": 0,
             "high_confidence_users": 0,
+            "low_confidence_reason": "No reliable age signals were available.",
         }
 
         if self.use_ai and self.ai_predictor.client and real_comments:
@@ -552,6 +620,7 @@ class AudienceAnalytics:
                 "method": age_result.get("method", "multi-signal inference"),
                 "total_users": age_result.get("total_users", len(user_age_predictions)),
                 "high_confidence_users": age_result.get("high_confidence_users", 0),
+                "low_confidence_reason": age_result.get("low_confidence_reason", ""),
             }
 
             # Language distribution from extracted comments
@@ -564,6 +633,45 @@ class AudienceAnalytics:
             )
 
         timings["inference_seconds"] = self._elapsed(step_started)
+
+        real_user_count = len([c for c in extracted_comments if not c.get("is_bot")])
+        try:
+            age_confidence = float(age_metadata.get("confidence", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            age_confidence = 0.0
+        try:
+            age_prediction_count = int(age_metadata.get("total_users", 0) or 0)
+        except (TypeError, ValueError):
+            age_prediction_count = 0
+        age_sample_size = max(age_prediction_count, real_user_count)
+        age_low_confidence_reason = str(age_metadata.get("low_confidence_reason") or "")
+        if age_confidence < LOW_AGE_CONFIDENCE_THRESHOLD and not age_low_confidence_reason:
+            if age_sample_size >= MIN_AGE_FALLBACK_SAMPLE_USERS:
+                age_low_confidence_reason = (
+                    "Age confidence below reliability threshold; returned large-sample "
+                    "behavioral distribution instead of empty buckets."
+                )
+            else:
+                age_low_confidence_reason = "Age confidence below reliability threshold."
+
+        age_dist = self._normalize_age_distribution(
+            age_dist,
+            age_confidence,
+            sample_size=age_sample_size,
+        )
+
+        location_low_confidence_reason = self._low_location_signal_reason(
+            real_user_count=real_user_count,
+            geotags=geotags,
+            location_slang=all_slang,
+            languages=languages,
+        )
+        gender_low_confidence_reason = ""
+        if location_low_confidence_reason and real_user_count < MIN_DEMOGRAPHIC_SIGNAL_USERS:
+            gender_dist = {"male": 0.0, "female": 0.0, "unknown": 100.0}
+            country_dist = {}
+            city_dist = {}
+            gender_low_confidence_reason = "Insufficient reliable user signals for gender inference."
 
         # --- Step 5: scoring + output ---
         step_started = time.monotonic()
@@ -606,10 +714,34 @@ class AudienceAnalytics:
             "country_distribution": country_dist,
             "city_distribution": city_dist,
             "language_distribution": language_dist,
+            "demographics_meta": {
+                "sample": {
+                    "commentsAnalyzed": len(comments),
+                    "realUsersAnalyzed": real_user_count,
+                    "postsAnalyzed": len(posts[: max(1, max_posts)]),
+                },
+                "age": {
+                    "confidence": age_confidence,
+                    "method": age_metadata.get("method", "multi-signal inference"),
+                    "totalUsers": age_metadata.get("total_users", 0),
+                    "highConfidenceUsers": age_metadata.get("high_confidence_users", 0),
+                    "lowConfidenceReason": age_low_confidence_reason,
+                },
+                "gender": {
+                    "lowConfidenceReason": gender_low_confidence_reason,
+                },
+                "location": {
+                    "lowConfidenceReason": location_low_confidence_reason,
+                    "geotagCount": len(geotags),
+                    "locationSlangSignalCount": sum(
+                        score for score in all_slang.values() if score > 0
+                    ),
+                },
+            },
             "audience_quality_score": aq_score,
             "fake_followers_percent": fake_follower_percent,
             "total_comments_analyzed": len(comments),
-            "real_users_analyzed": len([c for c in extracted_comments if not c.get("is_bot")]),
+            "real_users_analyzed": real_user_count,
             "comments": comments,
             "posts": posts[: max(1, max_posts)],
             "analysis_status": analysis_status,

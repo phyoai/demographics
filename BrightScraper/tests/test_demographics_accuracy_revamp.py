@@ -115,6 +115,16 @@ class DemographicsAccuracyRevampTests(unittest.TestCase):
         self.assertEqual(first["city_distribution"], second["city_distribution"])
         self.assertEqual(first["demographics_meta"], second["demographics_meta"])
 
+    def test_large_low_confidence_age_sample_keeps_behavioral_distribution(self):
+        analytics = _build_analytics(age_confidence=0.22)
+        result = analytics.analyze_audience("demo_user", max_posts=8, fast_mode=False, deadline_seconds=30)
+        age_dist = result["age_distribution"]
+
+        self.assertEqual(set(age_dist.keys()), set(AGE_BUCKETS))
+        self.assertAlmostEqual(sum(age_dist.values()), 100.0, places=1)
+        self.assertTrue(any(value > 0.0 for value in age_dist.values()))
+        self.assertTrue(result["demographics_meta"]["age"]["lowConfidenceReason"])
+
     def test_low_confidence_gating_returns_unknown_or_empty_demographics(self):
         analytics = _build_analytics(age_confidence=0.22)
 

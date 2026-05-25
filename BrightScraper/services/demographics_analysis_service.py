@@ -120,21 +120,44 @@ def get_analyze_db_collection() -> Any | None:
         return None
 
 
-def get_stored_scrapes_collection() -> Any | None:
+def normalize_stored_scrape_source(
+    database_name: str | None = None,
+    collection_name: str | None = None,
+) -> tuple[str, str]:
+    db_name = database_name.strip() if isinstance(database_name, str) else ""
+    coll_name = collection_name.strip() if isinstance(collection_name, str) else ""
+    return db_name or STORED_SCRAPES_DB_NAME, coll_name or STORED_SCRAPES_COLLECTION
+
+
+def get_stored_scrapes_collection(
+    database_name: str | None = None,
+    collection_name: str | None = None,
+) -> Any | None:
     if pymongo is None:
         return None
+
+    db_name, coll_name = normalize_stored_scrape_source(database_name, collection_name)
 
     try:
         client = pymongo.MongoClient(STORED_SCRAPES_MONGO_URI, serverSelectionTimeoutMS=2000)
         client.admin.command("ping")
-        return client[STORED_SCRAPES_DB_NAME][STORED_SCRAPES_COLLECTION]
+        return client[db_name][coll_name]
     except Exception:
-        logger.exception("Failed to connect to stored Instagram scrape MongoDB collection")
+        logger.exception(
+            "Failed to connect to stored Instagram scrape MongoDB collection %s.%s",
+            db_name,
+            coll_name,
+        )
         return None
 
 
-def load_stored_instagram_scrape(username: str) -> dict[str, Any] | None:
-    collection = get_stored_scrapes_collection()
+def load_stored_instagram_scrape(
+    username: str,
+    *,
+    database_name: str | None = None,
+    collection_name: str | None = None,
+) -> dict[str, Any] | None:
+    collection = get_stored_scrapes_collection(database_name, collection_name)
     if collection is None:
         return None
 
@@ -171,10 +194,46 @@ def coerce_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def first_present(mapping: dict[str, Any], keys: tuple[str, ...], default: Any = None) -> Any:
+    for key in keys:
+        value = mapping.get(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+def nested_first_present(mapping: dict[str, Any], parents: tuple[str, ...], keys: tuple[str, ...]) -> Any:
+    for parent in parents:
+        nested = mapping.get(parent)
+        if isinstance(nested, dict):
+            value = first_present(nested, keys)
+            if value not in (None, ""):
+                return value
+    return None
+
+
 def normalize_stored_comment(comment: dict[str, Any], post: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(comment)
-    normalized["username"] = str(normalized.get("username") or "").strip()
-    normalized["text"] = str(normalized.get("text") or "")
+    username = first_present(
+        normalized,
+        ("username", "user_name", "owner_username", "commenter_username"),
+    ) or nested_first_present(normalized, ("user", "owner", "commenter"), ("username", "user_name"))
+    normalized["username"] = str(username or "").strip()
+    normalized["text"] = str(
+        first_present(normalized, ("text", "comment", "comment_text", "body"), "")
+    )
+    normalized["full_name"] = first_present(
+        normalized,
+        ("full_name", "user_full_name", "owner_full_name", "commenter_full_name"),
+    ) or nested_first_present(normalized, ("user", "owner", "commenter"), ("full_name", "name"))
+    normalized["profile_pic_url"] = first_present(
+        normalized,
+        ("profile_pic_url", "profile_picture", "profile_image", "avatar_url"),
+    ) or nested_first_present(
+        normalized,
+        ("user", "owner", "commenter"),
+        ("profile_pic_url", "profile_picture", "profile_image", "avatar_url"),
+    )
     normalized["timestamp"] = (
         normalized.get("timestamp")
         or normalized.get("posted_at")
@@ -185,6 +244,8 @@ def normalize_stored_comment(comment: dict[str, Any], post: dict[str, Any]) -> d
     normalized["likes_count"] = normalized["likes"]
     normalized["post_url"] = post.get("post_url") or post.get("url")
     normalized["post_shortcode"] = post.get("shortcode")
+    normalized["post_type"] = post.get("media_type") or post.get("post_type")
+    normalized["post_caption"] = post.get("caption")
     return normalized
 
 
@@ -204,13 +265,22 @@ def normalize_stored_post(post: dict[str, Any]) -> dict[str, Any]:
     normalized["likes_count"] = coerce_int(normalized.get("likes_count", normalized.get("likes")), 0)
     normalized["comments_count"] = comments_count
     normalized["timestamp"] = normalized.get("timestamp") or normalized.get("posted_at")
+    if not normalized.get("location"):
+        normalized["location"] = first_present(
+            normalized,
+            ("location_name", "location_text", "place", "venue"),
+        )
     return normalized
 
 
 def build_stored_analysis_inputs(
     scrape_doc: dict[str, Any],
     username: str,
+    *,
+    database_name: str | None = None,
+    collection_name: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    db_name, coll_name = normalize_stored_scrape_source(database_name, collection_name)
     scrape_result = scrape_doc.get("result") if isinstance(scrape_doc.get("result"), dict) else scrape_doc
     if not isinstance(scrape_result, dict):
         raise ValueError(f"No stored Instagram scrape found for @{username}")
@@ -275,13 +345,13 @@ def build_stored_analysis_inputs(
 
     scrape_id = scrape_doc.get("_id")
     meta = {
-        "db": STORED_SCRAPES_DB_NAME,
-        "collection": STORED_SCRAPES_COLLECTION,
+        "db": db_name,
+        "collection": coll_name,
         "storage_id": str(scrape_id) if scrape_id is not None else scrape_result.get("storage_id"),
         "requested_username": scrape_doc.get("requested_username") or scrape_result.get("requested_username"),
         "scraped_at": str(scrape_doc.get("scraped_at") or scrape_result.get("scraped_at") or ""),
         "posts_loaded": len(posts),
-        "posts_used_for_comments": 48,
+        "posts_used_for_comments": len(posts),
         "comments_loaded": len(comments),
         "stored_comment_slots": total_post_comment_slots,
         "max_posts_requested": scrape_doc.get("max_posts_requested") or scrape_result.get("max_posts_requested"),
@@ -467,13 +537,25 @@ def execute_stored_analysis_pipeline(
     username: str,
     deadline_seconds: int,
     fast_mode: bool,
+    *,
+    database_name: str | None = None,
+    collection_name: str | None = None,
 ) -> tuple[dict[str, Any], int]:
     started_at = time.monotonic()
-    scrape_doc = load_stored_instagram_scrape(username)
+    scrape_doc = load_stored_instagram_scrape(
+        username,
+        database_name=database_name,
+        collection_name=collection_name,
+    )
     if scrape_doc is None:
         raise ValueError(f"No stored Instagram scrape found for @{username}")
 
-    profile, posts, comments, stored_meta = build_stored_analysis_inputs(scrape_doc, username)
+    profile, posts, comments, stored_meta = build_stored_analysis_inputs(
+        scrape_doc,
+        username,
+        database_name=database_name,
+        collection_name=collection_name,
+    )
     if not posts and not comments:
         raise ValueError(f"No stored Instagram posts or comments found for @{username}")
 
@@ -598,6 +680,8 @@ async def run_analyze_job(
     deadline_seconds: int,
     fast_mode: bool,
     use_stored_data: bool = False,
+    database_name: str | None = None,
+    collection_name: str | None = None,
 ) -> None:
     update_analyze_job(app_state, job_id, status="running", stage="analysis")
 
@@ -608,6 +692,8 @@ async def run_analyze_job(
                 username,
                 deadline_seconds,
                 fast_mode,
+                database_name=database_name,
+                collection_name=collection_name,
             )
         else:
             result, http_status = await asyncio.to_thread(

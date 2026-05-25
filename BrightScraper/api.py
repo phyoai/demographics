@@ -19,6 +19,7 @@ try:
         DemographicsAnalyzeRequest,
         InstagramProfileDataRequest,
         LocationLookupRequest,
+        ProfileScrapeRequest,
         ReverseLocationLookupRequest,
         SearchPayload,
     )
@@ -76,6 +77,7 @@ except ImportError:  # pragma: no cover
         DemographicsAnalyzeRequest,
         InstagramProfileDataRequest,
         LocationLookupRequest,
+        ProfileScrapeRequest,
         ReverseLocationLookupRequest,
         SearchPayload,
     )
@@ -225,6 +227,18 @@ def _schedule_profile_scrape_trigger(usernames: list[str], country=None, city=No
     asyncio.create_task(_post_profile_scrape_request(usernames, country, city))
 
 
+def _stored_source_kwargs(
+    database_name: str | None,
+    collection_name: str | None,
+) -> dict[str, str]:
+    kwargs: dict[str, str] = {}
+    if isinstance(database_name, str) and database_name.strip():
+        kwargs["database_name"] = database_name.strip()
+    if isinstance(collection_name, str) and collection_name.strip():
+        kwargs["collection_name"] = collection_name.strip()
+    return kwargs
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     cleanup_expired_analyze_jobs(app.state)
@@ -296,6 +310,110 @@ async def reverse_resolve_locations(payload: ReverseLocationLookupRequest) -> di
         ) from exc
 
 
+async def _execute_profile_scrape_from_stored_data(
+    username: str,
+    request: ProfileScrapeRequest,
+) -> tuple[dict[str, Any], int]:
+    deadline_seconds = normalize_deadline_seconds(request.deadline_seconds)
+    fast_mode = request.fast_mode if request.fast_mode is not None else False
+    stored_source_kwargs = _stored_source_kwargs(
+        request.mongodb_database,
+        request.mongodb_collection,
+    )
+
+    envelope, http_status = await asyncio.to_thread(
+        execute_stored_analysis_pipeline,
+        username,
+        deadline_seconds,
+        fast_mode,
+        **stored_source_kwargs,
+    )
+
+    warnings = envelope.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+    else:
+        warnings = list(warnings)
+
+    if request.force_refresh:
+        warnings.append(
+            "force_refresh was requested, but this endpoint analyzed the latest stored MongoDB scrape."
+        )
+    if request.max_posts is not None or request.max_comments is not None:
+        warnings.append(
+            "Stored-data analysis used all posts and comments available in the MongoDB document."
+        )
+    envelope["warnings"] = warnings
+
+    envelope["cache"] = {
+        "hit": False,
+        "source": "stored_data",
+        "age_seconds": 0,
+        "ttl_seconds": None,
+    }
+    envelope["profile_scrape_request"] = {
+        "username": username,
+        "mongodb_database": stored_source_kwargs.get("database_name", STORED_SCRAPES_DB_NAME),
+        "mongodb_collection": stored_source_kwargs.get("collection_name", STORED_SCRAPES_COLLECTION),
+        "fast_mode": fast_mode,
+        "deadline_seconds": deadline_seconds,
+        "used_all_stored_posts_and_comments": True,
+    }
+    return envelope, http_status
+
+
+@app.post("/profiles/scrape")
+async def scrape_profiles_from_stored_data(payload: ProfileScrapeRequest) -> JSONResponse:
+    usernames = normalize_input_usernames(payload.username, payload.usernames)
+    if not usernames:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide at least one username via 'username' or 'usernames'.",
+        )
+
+    if len(usernames) == 1:
+        username = usernames[0]
+        try:
+            envelope, http_status = await _execute_profile_scrape_from_stored_data(username, payload)
+        except Exception as exc:
+            error_envelope, http_status = build_error_envelope(exc, username=username)
+            return JSONResponse(status_code=http_status, content=error_envelope)
+
+        return JSONResponse(status_code=http_status, content=envelope)
+
+    results: dict[str, Any] = {}
+    failed_usernames: list[str] = []
+    max_http_status = status.HTTP_200_OK
+
+    for username in usernames:
+        try:
+            envelope, http_status = await _execute_profile_scrape_from_stored_data(username, payload)
+            results[username] = envelope
+            max_http_status = max(max_http_status, http_status)
+            if not envelope.get("success", False):
+                failed_usernames.append(username)
+        except Exception as exc:
+            error_envelope, http_status = build_error_envelope(exc, username=username)
+            results[username] = error_envelope
+            failed_usernames.append(username)
+            max_http_status = max(max_http_status, http_status)
+
+    response_status = status.HTTP_200_OK if not failed_usernames else 207
+    if failed_usernames and len(failed_usernames) == len(usernames):
+        response_status = max_http_status
+
+    return JSONResponse(
+        status_code=response_status,
+        content={
+            "success": not failed_usernames,
+            "status": "success" if not failed_usernames else "partial",
+            "requested_usernames": usernames,
+            "failed_usernames": failed_usernames,
+            "results": results,
+        },
+    )
+
+
 @app.post("/demographics/analyze", dependencies=[Depends(verify_api_key)])
 async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) -> JSONResponse:
     request = payload or DemographicsAnalyzeRequest()
@@ -321,6 +439,10 @@ async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) ->
     use_stored_data = request.use_stored_data
     deadline_seconds = normalize_deadline_seconds(request.deadline_seconds)
     default_max_posts = 4 if fast_mode else 6
+    stored_source_kwargs = _stored_source_kwargs(
+        request.mongodb_database,
+        request.mongodb_collection,
+    )
 
     max_posts = request.max_posts if request.max_posts is not None else default_max_posts
 
@@ -331,6 +453,7 @@ async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) ->
                 username,
                 deadline_seconds,
                 fast_mode,
+                **stored_source_kwargs,
             )
         except Exception as exc:
             error_envelope, http_status = build_error_envelope(exc, username=username)
@@ -376,6 +499,8 @@ async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) ->
                 "deadline_seconds": deadline_seconds,
                 "fast_mode": fast_mode,
                 "use_stored_data": use_stored_data,
+                "mongodb_database": stored_source_kwargs.get("database_name"),
+                "mongodb_collection": stored_source_kwargs.get("collection_name"),
             }
         )
         task = asyncio.create_task(
@@ -387,6 +512,8 @@ async def analyze_audience(payload: DemographicsAnalyzeRequest | None = None) ->
                 deadline_seconds,
                 fast_mode,
                 use_stored_data,
+                stored_source_kwargs.get("database_name"),
+                stored_source_kwargs.get("collection_name"),
             )
         )
         app.state.analyze_tasks[job["job_id"]] = task

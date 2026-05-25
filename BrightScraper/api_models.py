@@ -27,6 +27,23 @@ class DemographicsAnalyzeRequest(StrictModel):
     use_stored_data: bool = False
     deadline_seconds: int | None = None
     max_posts: int | None = Field(default=None, ge=1, le=40)
+    mongodb_database: str | None = None
+    mongodb_collection: str | None = None
+
+
+class ProfileScrapeRequest(UsernamesRequest):
+    max_posts: int | None = Field(default=None, ge=1, le=200)
+    max_comments: int | None = Field(default=None, ge=1, le=5000)
+    post_workers: int | None = Field(default=None, ge=1, le=50)
+    force_refresh: bool = False
+    cache_max_age_days: int | None = Field(default=None, ge=0)
+    mongodb_database: str | None = None
+    mongodb_collection: str | None = None
+    save_image: bool = False
+    country: str | None = None
+    city: str | None = None
+    deadline_seconds: int | None = None
+    fast_mode: bool | None = None
 
 
 class SearchPayload(StrictModel):
