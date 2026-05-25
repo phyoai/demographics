@@ -6,7 +6,17 @@ import re
 import emoji
 from collections import Counter
 from datetime import datetime
-from langdetect import detect, LangDetectException
+from langdetect import DetectorFactory, LangDetectException, detect, detect_langs
+
+try:
+    from nameparser import HumanName
+except Exception:  # pragma: no cover - optional dependency
+    HumanName = None
+
+try:
+    import pycountry
+except Exception:  # pragma: no cover - optional dependency
+    pycountry = None
 
 try:
     from ..config import (
@@ -22,11 +32,205 @@ except ImportError:
     from config import AGE_HASHTAGS, LOCATION_SLANG, SPAM_PATTERNS, MALE_EMOJIS, FEMALE_EMOJIS, MALE_KEYWORDS, FEMALE_KEYWORDS
 
 
+DetectorFactory.seed = 0
+
+NON_NAME_TOKENS = {
+    "the",
+    "its",
+    "mr",
+    "mrs",
+    "ms",
+    "dr",
+    "official",
+    "real",
+    "code",
+    "bit",
+    "tech",
+    "dev",
+    "fan",
+    "club",
+    "team",
+    "edit",
+    "edits",
+    "status",
+    "reels",
+    "vlogs",
+    "page",
+}
+
+CITY_ALIASES = {
+    "Delhi": ["delhi", "new delhi", "dilli", "ncr"],
+    "Noida": ["noida", "greater noida"],
+    "Gurugram": ["gurugram", "gurgaon", "ggn"],
+    "Ghaziabad": ["ghaziabad", "gzb"],
+    "Faridabad": ["faridabad", "fbd"],
+    "Mumbai": ["mumbai", "bombay"],
+    "Bangalore": ["bangalore", "bengaluru", "blr"],
+    "Hyderabad": ["hyderabad", "hyd"],
+    "Chennai": ["chennai", "madras"],
+    "Pune": ["pune"],
+    "Kolkata": ["kolkata", "calcutta"],
+    "Ahmedabad": ["ahmedabad"],
+    "Jaipur": ["jaipur"],
+    "Lucknow": ["lucknow"],
+    "Surat": ["surat"],
+    "Patna": ["patna"],
+    "Bhubaneswar": ["bhubaneswar", "odisha", "orissa"],
+    "Raipur": ["raipur", "chhattisgarh"],
+    "Bhopal": ["bhopal", "madhya pradesh", "mp"],
+    "Karachi": ["karachi"],
+    "Lahore": ["lahore"],
+    "Islamabad": ["islamabad"],
+    "Dhaka": ["dhaka"],
+    "Dubai": ["dubai"],
+    "Abu Dhabi": ["abu dhabi"],
+    "London": ["london"],
+    "New York": ["new york", "nyc"],
+    "Los Angeles": ["los angeles", "la"],
+    "Singapore": ["singapore"],
+}
+
+CITY_TO_COUNTRY = {
+    "Delhi": "India",
+    "Noida": "India",
+    "Gurugram": "India",
+    "Ghaziabad": "India",
+    "Faridabad": "India",
+    "Mumbai": "India",
+    "Bangalore": "India",
+    "Hyderabad": "India",
+    "Chennai": "India",
+    "Pune": "India",
+    "Kolkata": "India",
+    "Ahmedabad": "India",
+    "Jaipur": "India",
+    "Lucknow": "India",
+    "Surat": "India",
+    "Patna": "India",
+    "Bhubaneswar": "India",
+    "Raipur": "India",
+    "Bhopal": "India",
+    "Karachi": "Pakistan",
+    "Lahore": "Pakistan",
+    "Islamabad": "Pakistan",
+    "Dhaka": "Bangladesh",
+    "Dubai": "UAE",
+    "Abu Dhabi": "UAE",
+    "London": "UK",
+    "New York": "USA",
+    "Los Angeles": "USA",
+    "Singapore": "Singapore",
+}
+
+COUNTRY_ALIASES = {
+    "India": ["india", "bharat", "hindustan", "indian"],
+    "USA": ["usa", "us", "america", "united states"],
+    "UK": ["uk", "united kingdom", "britain", "england"],
+    "UAE": ["uae", "dubai", "abu dhabi", "emirates"],
+    "Pakistan": ["pakistan", "pakistani"],
+    "Bangladesh": ["bangladesh", "bangladeshi"],
+    "Canada": ["canada", "canadian"],
+    "Australia": ["australia", "aussie"],
+    "Singapore": ["singapore"],
+}
+
+HINGLISH_WORDS = {
+    "bhai",
+    "yaar",
+    "kya",
+    "acha",
+    "accha",
+    "matlab",
+    "dost",
+    "dekh",
+    "sahi",
+    "nahi",
+    "hai",
+    "hoon",
+    "aap",
+    "mujhe",
+    "maine",
+    "kaise",
+    "karo",
+    "bada",
+    "bahut",
+    "ji",
+    "sir",
+    "sar",
+}
+
+LANGUAGE_NORMALIZATION = {
+    "hindi": "hi",
+    "tamil": "ta",
+    "telugu": "te",
+    "kannada": "kn",
+    "bengali": "bn",
+    "marathi": "mr",
+}
+
+
 class FeatureExtractor:
     """Extract features from Instagram data"""
     
     def __init__(self):
         pass
+
+    @staticmethod
+    def clean_text(text):
+        if not text:
+            return ""
+
+        cleaned = str(text)
+        cleaned = re.sub(r"https?://\S+", " ", cleaned)
+        cleaned = re.sub(r"@\w+", " ", cleaned)
+        cleaned = re.sub(r"#", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        return cleaned.strip()
+
+    @staticmethod
+    def _contains_phrase(text_lower, phrase):
+        escaped = re.escape(phrase.lower())
+        if " " in phrase:
+            return re.search(rf"(?<!\w){escaped}(?!\w)", text_lower) is not None
+        return re.search(rf"\b{escaped}\b", text_lower) is not None
+
+    def parse_name_parts(self, full_name, username):
+        raw_name = self.clean_text(full_name)
+
+        if raw_name and HumanName is not None:
+            parsed = HumanName(raw_name)
+            first = parsed.first.strip().lower()
+            last = parsed.last.strip().lower()
+            if first and first not in NON_NAME_TOKENS:
+                return {
+                    "first_name": first,
+                    "last_name": last or None,
+                    "source": "full_name",
+                    "confidence": 0.95,
+                }
+
+        if raw_name:
+            ascii_name = re.sub(r"[^A-Za-z\s]", " ", raw_name)
+            parts = [
+                part.lower()
+                for part in ascii_name.split()
+                if len(part) > 1 and part.lower() not in NON_NAME_TOKENS
+            ]
+            if parts:
+                return {
+                    "first_name": parts[0],
+                    "last_name": parts[-1] if len(parts) > 1 else None,
+                    "source": "full_name",
+                    "confidence": 0.9,
+                }
+
+        username_name = self.extract_first_name(username)
+        return {
+            "first_name": username_name,
+            "last_name": None,
+            "source": "username" if username_name else "none",
+            "confidence": 0.55 if username_name else 0.0,
+        }
     
     def extract_first_name(self, username):
         """
@@ -68,7 +272,7 @@ class FeatureExtractor:
             # Return the first meaningful part
             first_part = parts[0]
             # Filter out common prefixes/suffixes
-            if first_part not in ['the', 'its', 'mr', 'ms', 'dr', 'official', 'real', 'code', 'bit', 'tech', 'dev']:
+            if first_part not in NON_NAME_TOKENS:
                 return first_part
             elif len(parts) > 1:
                 return parts[1]
@@ -97,30 +301,55 @@ class FeatureExtractor:
         emojis = self.extract_emojis(text)
         return len(emojis) / len(text) if len(text) > 0 else 0.0
     
-    def detect_language(self, text):
-        """Detect language of text - IMPROVED for short texts and emojis"""
+    def detect_language_details(self, text):
+        """Return deterministic language label plus confidence and alternatives."""
         if not text or len(text) < 3:
-            return 'unknown'
-        
-        # Remove emojis and special characters for better detection
-        import re
-        text_clean = re.sub(r'[^\w\s]', '', text)
-        text_clean = ''.join(c for c in text_clean if not emoji.is_emoji(c))
-        
-        # If mostly emojis or too short after cleaning, return unknown
-        if len(text_clean.strip()) < 5:
-            return 'unknown'
-        
+            return {"language": "unknown", "confidence": 0.0, "candidates": []}
+
+        text_clean = self.clean_text(text)
+        text_clean = re.sub(r"[^\w\s]", " ", text_clean)
+        text_clean = "".join(c for c in text_clean if not emoji.is_emoji(c))
+        text_clean = re.sub(r"\s+", " ", text_clean).strip()
+
+        if len(text_clean) < 8:
+            return {"language": "unknown", "confidence": 0.0, "candidates": []}
+
+        text_lower = text_clean.lower()
+        hinglish_hits = sum(1 for word in HINGLISH_WORDS if self._contains_phrase(text_lower, word))
+        if hinglish_hits >= 2:
+            return {
+                "language": "hi",
+                "confidence": min(0.95, 0.55 + hinglish_hits * 0.08),
+                "candidates": [{"language": "hi", "confidence": min(0.95, 0.55 + hinglish_hits * 0.08)}],
+            }
+
         try:
-            detected = detect(text_clean)
-            # If detected language is uncommon for Instagram India, default to English
-            # Common false positives: so (Somali), vi (Vietnamese), pl (Polish), fi (Finnish), sq (Albanian), ca (Catalan), id (Indonesian)
-            if detected in ['so', 'vi', 'pl', 'fi', 'nl', 'da', 'no', 'sv', 'sq', 'ca', 'id', 'tl', 'cy']:
-                # These are likely misdetections of short English text
-                return 'en'
-            return detected
+            detected_candidates = detect_langs(text_clean)
         except LangDetectException:
-            return 'unknown'
+            return {"language": "unknown", "confidence": 0.0, "candidates": []}
+
+        candidates = [
+            {"language": candidate.lang, "confidence": round(float(candidate.prob), 3)}
+            for candidate in detected_candidates[:3]
+        ]
+        if not candidates:
+            return {"language": "unknown", "confidence": 0.0, "candidates": []}
+
+        detected = candidates[0]["language"]
+        confidence = candidates[0]["confidence"]
+        common_short_text_false_positives = {"so", "vi", "pl", "fi", "nl", "da", "no", "sv", "sq", "ca", "id", "tl", "cy"}
+        if detected in common_short_text_false_positives and len(text_clean) < 24 and confidence < 0.92:
+            return {
+                "language": "en",
+                "confidence": 0.45,
+                "candidates": candidates,
+            }
+
+        return {"language": detected, "confidence": confidence, "candidates": candidates}
+
+    def detect_language(self, text):
+        """Detect language of text."""
+        return self.detect_language_details(text)["language"]
     
     def detect_user_language(self, username, comment_text):
         """
@@ -129,16 +358,16 @@ class FeatureExtractor:
         """
         # Indian name patterns indicate Hindi/regional language speakers
         indian_name_patterns = {
-            'hindi': ['singh', 'kumar', 'sharma', 'gupta', 'yadav', 'verma', 'jain', 'agarwal', 
+            'hi': ['singh', 'kumar', 'sharma', 'gupta', 'yadav', 'verma', 'jain', 'agarwal', 
                      'raj', 'ravi', 'amit', 'ankit', 'rohit', 'rahul', 'deepak', 'sanjay', 'vijay',
                      'priya', 'neha', 'pooja', 'anjali', 'kavya', 'divya', 'arora', 'kapoor',
                      'malhotra', 'bhatia', 'sethi', 'saxena', 'mittal', 'abhi', 'abhishek',
                      'saini', 'tyagi', 'chauhan', 'pandit', 'joshi', 'negi'],
-            'tamil': ['raman', 'krishnan', 'murugan', 'sundaram', 'rajesh', 'iyer', 'venkat', 'swamy'],
-            'telugu': ['reddy', 'rao', 'naidu', 'prasad', 'chowdary'],
-            'kannada': ['gowda', 'hegde', 'shetty', 'nayak'],
-            'bengali': ['das', 'sen', 'chatterjee', 'banerjee', 'ghosh', 'bose', 'roy', 'dutta'],
-            'marathi': ['patil', 'kulkarni', 'deshmukh', 'pawar', 'shinde', 'jadhav']
+            'ta': ['raman', 'krishnan', 'murugan', 'sundaram', 'rajesh', 'iyer', 'venkat', 'swamy'],
+            'te': ['reddy', 'rao', 'naidu', 'prasad', 'chowdary'],
+            'kn': ['gowda', 'hegde', 'shetty', 'nayak'],
+            'bn': ['das', 'sen', 'chatterjee', 'banerjee', 'ghosh', 'bose', 'roy', 'dutta'],
+            'mr': ['patil', 'kulkarni', 'deshmukh', 'pawar', 'shinde', 'jadhav']
         }
         
         if username:
@@ -152,19 +381,64 @@ class FeatureExtractor:
         # Check comment for Hindi/Indian language words
         if comment_text:
             text_lower = comment_text.lower()
-            hindi_words = ['bhai', 'yaar', 'kya', 'acha', 'matlab', 'dost', 'bhidu', 'guru', 
-                          'anna', 'da', 'machaa', 'dekh', 'sahi', 'bro', 'dude', 'bhai', 'vai']
-            if any(word in text_lower for word in hindi_words):
-                return 'hindi'
-        
+            if sum(1 for word in HINGLISH_WORDS if self._contains_phrase(text_lower, word)) >= 2:
+                return 'hi'
+
         # Fallback to regular detection
-        detected = self.detect_language(comment_text) if comment_text else 'en'
-        
-        # If still unknown, default to English (most common on Instagram India)
-        if detected == 'unknown':
-            return 'en'
-        
-        return detected
+        detected = self.detect_language_details(comment_text) if comment_text else {"language": "unknown"}
+        language = detected.get("language", "unknown")
+        return LANGUAGE_NORMALIZATION.get(language, language)
+
+    def extract_geo_mentions(self, text):
+        text_lower = self.clean_text(text).lower()
+        city_counts = Counter()
+        country_counts = Counter()
+
+        if not text_lower:
+            return {"cities": {}, "countries": {}}
+
+        for city, aliases in CITY_ALIASES.items():
+            for alias in aliases:
+                if self._contains_phrase(text_lower, alias):
+                    city_counts[city] += 1
+                    country = CITY_TO_COUNTRY.get(city)
+                    if country:
+                        country_counts[country] += 1
+                    break
+
+        for country, aliases in COUNTRY_ALIASES.items():
+            for alias in aliases:
+                if self._contains_phrase(text_lower, alias):
+                    normalized_country = self.normalize_country_name(country) or country
+                    country_counts[normalized_country] += 1
+                    break
+
+        return {
+            "cities": dict(city_counts),
+            "countries": dict(country_counts),
+        }
+
+    @staticmethod
+    def normalize_country_name(value):
+        if not value:
+            return None
+
+        candidate = str(value).strip()
+        if not candidate:
+            return None
+
+        if pycountry is not None:
+            try:
+                country = pycountry.countries.lookup(candidate)
+                return country.name
+            except LookupError:
+                pass
+
+        candidate_lower = candidate.lower()
+        for country, aliases in COUNTRY_ALIASES.items():
+            if candidate_lower == country.lower() or candidate_lower in aliases:
+                return country
+        return candidate
     
     def count_username_digits(self, username):
         """Count number of digits in username (bot indicator)"""
@@ -209,14 +483,40 @@ class FeatureExtractor:
         }
     
     def extract_gender_keywords(self, text):
-        """Extract gender-indicative keywords"""
+        """Extract gender-indicative self-identification keywords.
+
+        Generic address words such as "bhai" or "bro" usually refer to the creator,
+        not the commenter, so they should not make the commenter male.
+        """
         if not text:
             return {'male': 0, 'female': 0}
         
         text_lower = text.lower()
-        
-        male_count = sum(1 for keyword in MALE_KEYWORDS if keyword in text_lower)
-        female_count = sum(1 for keyword in FEMALE_KEYWORDS if keyword in text_lower)
+        male_identity_patterns = [
+            r"\bi\s*(am|'m|m)\s*(a\s*)?(man|male|boy|guy|brother|husband|father|dad)\b",
+            r"\bas\s*(a\s*)?(man|male|boy|guy|husband|father|dad)\b",
+            r"\b(male|boy|guy)\s+here\b",
+        ]
+        female_identity_patterns = [
+            r"\bi\s*(am|'m|m)\s*(a\s*)?(woman|female|girl|lady|sister|wife|mother|mom)\b",
+            r"\bas\s*(a\s*)?(woman|female|girl|lady|wife|mother|mom)\b",
+            r"\b(female|girl|lady)\s+here\b",
+        ]
+
+        male_count = sum(1 for pattern in male_identity_patterns if re.search(pattern, text_lower))
+        female_count = sum(1 for pattern in female_identity_patterns if re.search(pattern, text_lower))
+
+        # Keep emoji/word style support for clearly gendered, non-address terms only.
+        address_only_male_terms = {"bro", "bhai", "dude", "man", "brother", "king", "beast"}
+        address_only_female_terms = {"sis", "queen", "beautiful", "gorgeous", "stunning", "pretty"}
+        male_count += sum(
+            1 for keyword in MALE_KEYWORDS
+            if keyword not in address_only_male_terms and self._contains_phrase(text_lower, keyword)
+        )
+        female_count += sum(
+            1 for keyword in FEMALE_KEYWORDS
+            if keyword not in address_only_female_terms and self._contains_phrase(text_lower, keyword)
+        )
         
         return {
             'male': male_count,
@@ -286,43 +586,63 @@ class FeatureExtractor:
         timestamp = comment_data.get('timestamp')
         full_name = comment_data.get('full_name', '')  # NEW: From RapidAPI!
         profile_pic_url = comment_data.get('profile_pic_url', '')  # NEW: For face detection!
-        
-        # Extract first name - prefer full_name from Apify, fallback to username parsing
-        if full_name and full_name.strip():
-            # Use first part of full name (e.g., "Abhi Shek" -> "Abhi")
-            first_name = full_name.strip().split()[0].lower()
-        else:
-            # Fallback to extracting from username
-            first_name = self.extract_first_name(username)
+        normalized_text = self.clean_text(text)
+        name_parts = self.parse_name_parts(full_name, username)
+        first_name = name_parts["first_name"]
         
         emojis = self.extract_emojis(text)
         emoji_density = self.calculate_emoji_density(text)
         
         # Use username-based language detection for Indian users
-        language = self.detect_user_language(username, text)
+        language_details = self.detect_language_details(text)
+        language = language_details["language"]
+        if language == "unknown":
+            language = self.detect_user_language(username, text)
+            if language != "unknown":
+                language_details = {
+                    "language": language,
+                    "confidence": 0.35,
+                    "candidates": [{"language": language, "confidence": 0.35}],
+                }
         
         username_digits = self.count_username_digits(username)
         spam_score = self.detect_spam_patterns(text)
         location_slang = self.extract_location_slang(text)
+        geo_mentions = self.extract_geo_mentions(text)
         emoji_gender = self.analyze_emoji_gender(emojis)
         gender_keywords = self.extract_gender_keywords(text)
         is_bot = self.is_bot_likely(username, text)
         hour = self.extract_timestamp_hour(timestamp)
+        gender_signal_strength = name_parts["confidence"]
+        if sum(emoji_gender.values()) > 0:
+            gender_signal_strength += 0.15
+        if sum(gender_keywords.values()) > 0:
+            gender_signal_strength += 0.15
+        gender_signal_strength = min(1.0, gender_signal_strength)
         
         return {
             'username': username,
             'full_name': full_name,  # NEW: Keep full name for reference
             'profile_pic_url': profile_pic_url,  # NEW: Keep profile pic URL for face detection!
             'first_name': first_name,  # Improved: Uses real name when available!
+            'last_name': name_parts["last_name"],
+            'name_source': name_parts["source"],
+            'name_confidence': name_parts["confidence"],
             'text': text,
+            'normalized_text': normalized_text,
             'emojis': emojis,
             'emoji_density': emoji_density,
             'language': language,
+            'language_confidence': language_details.get('confidence', 0.0),
+            'language_candidates': language_details.get('candidates', []),
             'username_digits': username_digits,
             'spam_score': spam_score,
             'location_slang': location_slang,
+            'city_mentions': geo_mentions['cities'],
+            'country_mentions': geo_mentions['countries'],
             'emoji_gender': emoji_gender,
             'gender_keywords': gender_keywords,
+            'gender_signal_strength': gender_signal_strength,
             'is_bot': is_bot,
             'hour': hour,
             'timestamp': timestamp

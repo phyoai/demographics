@@ -201,6 +201,28 @@ class EnhancedResponseFormatter:
 
         return min(100, max(20, quality_score))
 
+    def normalize_binary_gender(self, gender_dist):
+        """
+        Return frontend gender percentages normalized across male/female only.
+        Raw analytics can keep unknown separately, but this visible pair should sum to 100.
+        """
+        try:
+            male = max(0.0, float(gender_dist.get('male', 0) or 0))
+            female = max(0.0, float(gender_dist.get('female', 0) or 0))
+        except (TypeError, ValueError):
+            return {'male': 0, 'female': 0}
+
+        total = male + female
+        if total <= 0:
+            return {'male': 0, 'female': 0}
+
+        normalized_male = round((male / total) * 100, 1)
+        normalized_female = round(100.0 - normalized_male, 1)
+        return {
+            'male': normalized_male,
+            'female': normalized_female
+        }
+
     def format_enhanced_response(self, profile_data, demographics, comments):
         """
         Format complete analytics response in Instagram-style
@@ -216,6 +238,7 @@ class EnhancedResponseFormatter:
         country_dist = demographics.get('country_distribution', {})
         city_dist = demographics.get('city_distribution', {})
         lang_dist = demographics.get('language_distribution', {})
+        binary_gender = self.normalize_binary_gender(gender_dist)
 
         return {
             'profile': {
@@ -242,10 +265,7 @@ class EnhancedResponseFormatter:
                     '55-64': age_dist.get('55-64', 0),
                     '65+': age_dist.get('65+', 0)
                 },
-                'gender': {
-                    'male': gender_dist.get('male', 0),
-                    'female': gender_dist.get('female', 0)
-                },
+                'gender': binary_gender,
                 'language': lang_dist,
                 'country': country_dist,
                 'city': city_dist,

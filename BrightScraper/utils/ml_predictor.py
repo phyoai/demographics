@@ -6,6 +6,7 @@ import gender_guesser.detector as gender
 from collections import Counter
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+import re
 import time
 
 try:
@@ -141,31 +142,65 @@ class AudiencePredictor:
     
     def predict_gender(self, first_name, emoji_gender, gender_keywords):
         """
-        Predict gender from name + comment patterns - IMPROVED FOR INDIAN NAMES
-        
+        Predict gender from name + high-confidence self-identification signals.
+
         Returns: {'male': 0.62, 'female': 0.36, 'unknown': 0.02}
         """
         scores = {'male': 0, 'female': 0, 'unknown': 0}
         
         # Common Indian name patterns
-        indian_male_names = ['raj', 'kumar', 'singh', 'sharma', 'dev', 'amit', 'ravi', 'anil', 'sunil', 
-                            'vijay', 'ajay', 'sanjay', 'rahul', 'rohan', 'arjun', 'karan', 'varun', 
-                            'harsh', 'deepak', 'mohit', 'nikhil', 'rohit', 'ankit', 'vishal', 'aman',
-                            'gaurav', 'ankur', 'shubham', 'abhi', 'abhishek', 'sarthak', 'aditya',
-                            'shiva', 'shiv', 'krishna', 'ram', 'prakash', 'shankar', 'nath']
+        indian_male_names = [
+            'raj', 'rajiv', 'rajesh', 'kumar', 'singh', 'dev', 'amit', 'ravi', 'anil', 'sunil',
+            'vijay', 'ajay', 'sanjay', 'rahul', 'rohan', 'arjun', 'karan', 'varun',
+            'harsh', 'deepak', 'mohit', 'nikhil', 'nikhilesh', 'rohit', 'ankit', 'vishal', 'aman',
+            'gaurav', 'ankur', 'shubham', 'abhi', 'abhishek', 'abhinav', 'abhay', 'sarthak',
+            'aditya', 'shiva', 'shiv', 'krishna', 'ram', 'prakash', 'shankar', 'nath',
+            'rakesh', 'piyush', 'mahesh', 'vikas', 'aryan', 'bhavin', 'krushang', 'devansh',
+            'divyansh', 'divyanshu', 'yash', 'kartik', 'sahil', 'saurabh', 'sumit', 'manish',
+            'nitesh', 'ritesh', 'siddharth', 'siddhant', 'parth', 'jay', 'jeet'
+        ]
         
-        indian_female_names = ['priya', 'anjali', 'neha', 'pooja', 'kavya', 'shreya', 'ananya', 
-                              'divya', 'isha', 'riya', 'meera', 'sakshi', 'simran', 'sneha', 
-                              'nisha', 'shweta', 'rashmi', 'swati', 'mansi', 'deepika', 'komal',
-                              'nikita', 'kriti', 'tanvi', 'vidya', 'sonal', 'aarti', 'rekha']
+        indian_female_names = [
+            'priya', 'priyanka', 'anjali', 'neha', 'pooja', 'puja', 'kavya', 'shreya', 'ananya',
+            'divya', 'isha', 'riya', 'riyaa', 'meera', 'sakshi', 'simran', 'sneha',
+            'nisha', 'shweta', 'rashmi', 'swati', 'mansi', 'deepika', 'komal',
+            'nikita', 'kriti', 'tanvi', 'vidya', 'sonal', 'aarti', 'rekha', 'vaishali',
+            'smita', 'khushbu', 'khushboo', 'janki', 'bhavana', 'vidhi', 'vidhie',
+            'prachi', 'dimple', 'archana', 'krisha', 'aarushi', 'aarooshi', 'arushi',
+            'richa', 'ritu', 'jyoti', 'payal', 'shikha', 'shruti', 'shradha', 'shraddha',
+            'aishwarya', 'radhika', 'vanshika', 'muskan', 'manisha', 'kanika', 'garima',
+            'monika', 'sonam', 'shivani', 'shalini', 'preeti', 'seema', 'sujata',
+            'nidhi', 'chhavi', 'meenakshi', 'kiran'
+        ]
+
+        def _name_tokens(value):
+            return [
+                token for token in re.split(r"[^a-z]+", value.lower())
+                if len(token) > 1
+            ]
+
+        def _matches_name(value, names):
+            tokens = _name_tokens(value)
+            if any(token in names for token in tokens):
+                return True
+
+            compact = re.sub(r"[^a-z]", "", value.lower())
+            for known_name in sorted(names, key=len, reverse=True):
+                if len(known_name) < 4:
+                    continue
+                if compact.startswith(known_name) or compact.endswith(known_name):
+                    return True
+                if f"_{known_name}" in value.lower() or f".{known_name}" in value.lower():
+                    return True
+            return False
         
         # 1. Name-based prediction (80% weight) - MOST IMPORTANT
         if first_name and len(first_name) > 1:
             name_lower = first_name.lower()
             
-            # Check Indian names first (with partial matching)
-            is_male = any(indian_name in name_lower or name_lower in indian_name for indian_name in indian_male_names)
-            is_female = any(indian_name in name_lower or name_lower in indian_name for indian_name in indian_female_names)
+            # Check curated names first, using conservative token/prefix matching.
+            is_male = _matches_name(name_lower, set(indian_male_names))
+            is_female = _matches_name(name_lower, set(indian_female_names))
             
             if is_male and not is_female:
                 scores['male'] += GENDER_WEIGHT['name']
@@ -194,29 +229,21 @@ class AudiencePredictor:
                     scores['male'] += GENDER_WEIGHT['name'] * 0.5
                     scores['female'] += GENDER_WEIGHT['name'] * 0.5
                 else:
-                    # If unknown, use ending patterns with higher confidence
-                    # Female name patterns (more common in Indian names)
+                    # Weak suffix hints are not enough to force a binary gender.
                     if name_lower.endswith(('a', 'i', 'ya', 'ia', 'sha', 'ka', 'ta', 'na', 'ni', 'ti', 'si', 'ika', 'ita')):
-                        scores['female'] += GENDER_WEIGHT['name'] * 0.75
-                        scores['male'] += GENDER_WEIGHT['name'] * 0.15
-                        scores['unknown'] += GENDER_WEIGHT['name'] * 0.1
-                    # Male name patterns
-                    elif name_lower.endswith(('o', 'an', 'en', 'ar', 'sh', 'it', 'aj', 'ul', 'at', 'ir', 'esh', 'esh')):
-                        scores['male'] += GENDER_WEIGHT['name'] * 0.75
-                        scores['female'] += GENDER_WEIGHT['name'] * 0.15
-                        scores['unknown'] += GENDER_WEIGHT['name'] * 0.1
-                    else:
-                        # If really unknown, bias towards male (Instagram India demographics)
-                        scores['male'] += GENDER_WEIGHT['name'] * 0.55
                         scores['female'] += GENDER_WEIGHT['name'] * 0.35
-                        scores['unknown'] += GENDER_WEIGHT['name'] * 0.1
+                        scores['male'] += GENDER_WEIGHT['name'] * 0.10
+                        scores['unknown'] += GENDER_WEIGHT['name'] * 0.55
+                    elif name_lower.endswith(('o', 'an', 'en', 'ar', 'sh', 'it', 'aj', 'ul', 'at', 'ir', 'esh', 'esh')):
+                        scores['male'] += GENDER_WEIGHT['name'] * 0.35
+                        scores['female'] += GENDER_WEIGHT['name'] * 0.10
+                        scores['unknown'] += GENDER_WEIGHT['name'] * 0.55
+                    else:
+                        scores['unknown'] += GENDER_WEIGHT['name']
         else:
-            # No name, use typical Instagram demographics (male-heavy)
-            scores['male'] += GENDER_WEIGHT['name'] * 0.6
-            scores['female'] += GENDER_WEIGHT['name'] * 0.35
-            scores['unknown'] += GENDER_WEIGHT['name'] * 0.05
+            scores['unknown'] += GENDER_WEIGHT['name']
         
-        # 2. Emoji style (10% weight) - Don't add to "unknown", distribute to gender
+        # 2. Emoji style (10% weight)
         if emoji_gender:
             total_emoji = emoji_gender.get('male', 0) + emoji_gender.get('female', 0)
             if total_emoji > 0:
@@ -225,15 +252,11 @@ class AudiencePredictor:
                 scores['male'] += male_ratio * GENDER_WEIGHT['emoji_style']
                 scores['female'] += female_ratio * GENDER_WEIGHT['emoji_style']
             else:
-                # No clear signal, use Instagram demographics
-                scores['male'] += GENDER_WEIGHT['emoji_style'] * 0.65
-                scores['female'] += GENDER_WEIGHT['emoji_style'] * 0.35
+                scores['unknown'] += GENDER_WEIGHT['emoji_style']
         else:
-            # No emoji data, use Instagram demographics
-            scores['male'] += GENDER_WEIGHT['emoji_style'] * 0.65
-            scores['female'] += GENDER_WEIGHT['emoji_style'] * 0.35
+            scores['unknown'] += GENDER_WEIGHT['emoji_style']
         
-        # 3. Comment style (10% weight) - Don't add to "unknown", distribute to gender
+        # 3. Comment self-identification style (10% weight)
         if gender_keywords:
             total_keywords = gender_keywords.get('male', 0) + gender_keywords.get('female', 0)
             if total_keywords > 0:
@@ -242,13 +265,9 @@ class AudiencePredictor:
                 scores['male'] += male_ratio * GENDER_WEIGHT['comment_style']
                 scores['female'] += female_ratio * GENDER_WEIGHT['comment_style']
             else:
-                # No clear signal, use Instagram demographics
-                scores['male'] += GENDER_WEIGHT['comment_style'] * 0.65
-                scores['female'] += GENDER_WEIGHT['comment_style'] * 0.35
+                scores['unknown'] += GENDER_WEIGHT['comment_style']
         else:
-            # No keyword data, use Instagram demographics
-            scores['male'] += GENDER_WEIGHT['comment_style'] * 0.65
-            scores['female'] += GENDER_WEIGHT['comment_style'] * 0.35
+            scores['unknown'] += GENDER_WEIGHT['comment_style']
         
         # Normalize
         total = sum(scores.values())

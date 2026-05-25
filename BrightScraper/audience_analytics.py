@@ -170,6 +170,176 @@ class AudienceAnalytics:
             return "Insufficient reliable location signals in stored comments and posts."
         return ""
 
+    @staticmethod
+    def _gender_signal_strength(comment: Dict[str, Any]) -> float:
+        try:
+            strength = float(comment.get("gender_signal_strength", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            strength = 0.0
+
+        if strength <= 0.0 and comment.get("first_name"):
+            strength = 0.55
+        if sum((comment.get("emoji_gender") or {}).values()) > 0:
+            strength += 0.15
+        if sum((comment.get("gender_keywords") or {}).values()) > 0:
+            strength += 0.15
+        return min(1.0, strength)
+
+    def _aggregate_gender_distribution(self, comments: List[Dict[str, Any]]) -> tuple[Dict[str, float], Dict[str, Any]]:
+        gender_scores = Counter({"male": 0.0, "female": 0.0, "unknown": 0.0})
+        evidence_users = 0
+
+        for comment in comments:
+            strength = self._gender_signal_strength(comment)
+            if strength < 0.25:
+                gender_scores["unknown"] += 1.0
+                continue
+
+            pred = self.predictor.predict_gender(
+                comment.get("first_name"),
+                comment.get("emoji_gender"),
+                comment.get("gender_keywords"),
+            )
+            gender_scores["male"] += pred.get("male", 0.0) * strength
+            gender_scores["female"] += pred.get("female", 0.0) * strength
+            gender_scores["unknown"] += pred.get("unknown", 0.0) * strength
+            gender_scores["unknown"] += max(0.0, 1.0 - strength) * 0.5
+            evidence_users += 1
+
+        total = sum(gender_scores.values())
+        if total <= 0:
+            return {"male": 0.0, "female": 0.0, "unknown": 100.0}, {
+                "evidenceUsers": 0,
+                "lowConfidenceReason": "No reliable gender signals were available.",
+            }
+
+        distribution = {key: round((value / total) * 100, 1) for key, value in gender_scores.items()}
+        low_confidence_reason = ""
+        if evidence_users < MIN_DEMOGRAPHIC_SIGNAL_USERS:
+            distribution = {"male": 0.0, "female": 0.0, "unknown": 100.0}
+            low_confidence_reason = "Insufficient reliable user signals for gender inference."
+
+        return distribution, {
+            "evidenceUsers": evidence_users,
+            "lowConfidenceReason": low_confidence_reason,
+        }
+
+    @staticmethod
+    def _language_distribution_from_features(comments: List[Dict[str, Any]]) -> tuple[Dict[str, float], Dict[str, Any]]:
+        language_scores = Counter()
+        evidence_users = 0
+
+        for comment in comments:
+            language = comment.get("language")
+            if not language or language == "unknown":
+                continue
+            try:
+                confidence = float(comment.get("language_confidence", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if confidence <= 0.0:
+                confidence = 0.55
+            if confidence < 0.30:
+                continue
+
+            language_scores[str(language)] += min(1.0, confidence)
+            evidence_users += 1
+
+        total = sum(language_scores.values())
+        if total <= 0:
+            return {}, {
+                "evidenceUsers": 0,
+                "lowConfidenceReason": "No reliable language signals were available.",
+            }
+
+        distribution = {
+            language: round((score / total) * 100, 1)
+            for language, score in language_scores.most_common(5)
+        }
+        return distribution, {
+            "evidenceUsers": evidence_users,
+            "lowConfidenceReason": "",
+        }
+
+    @staticmethod
+    def _merge_country_distribution(
+        predicted: Dict[str, float],
+        explicit_counts: Counter,
+        total_users: int,
+    ) -> tuple[Dict[str, float], Dict[str, Any]]:
+        country_scores = Counter()
+
+        for country, percentage in predicted.items():
+            try:
+                country_scores[country] += max(0.0, float(percentage)) / 100.0
+            except (TypeError, ValueError):
+                continue
+
+        explicit_users = sum(explicit_counts.values())
+        if total_users > 0:
+            for country, count in explicit_counts.items():
+                explicit_ratio = count / total_users
+                country_scores[country] += min(0.75, explicit_ratio * 3.0)
+
+        total = sum(country_scores.values())
+        if total <= 0:
+            return {}, {
+                "explicitUsers": explicit_users,
+                "lowConfidenceReason": "No reliable country signals were available.",
+            }
+
+        distribution = {
+            country: round((score / total) * 100, 1)
+            for country, score in country_scores.most_common(5)
+        }
+        return distribution, {
+            "explicitUsers": explicit_users,
+            "lowConfidenceReason": "",
+        }
+
+    @staticmethod
+    def _merge_city_distribution(
+        predicted: Dict[str, float],
+        explicit_counts: Counter,
+        total_users: int,
+    ) -> tuple[Dict[str, float], Dict[str, Any]]:
+        city_scores = Counter()
+
+        for city, percentage in predicted.items():
+            try:
+                city_scores[city] = max(city_scores[city], max(0.0, float(percentage)))
+            except (TypeError, ValueError):
+                continue
+
+        explicit_users = sum(explicit_counts.values())
+        if total_users > 0:
+            for city, count in explicit_counts.items():
+                explicit_percentage = round((count / total_users) * 100, 1)
+                city_scores[city] = max(city_scores[city], explicit_percentage)
+
+        distribution = {
+            city: round(score, 1)
+            for city, score in city_scores.most_common(5)
+            if score >= 0.5
+        }
+        low_confidence_reason = "" if distribution else "No reliable city signals were available."
+        return distribution, {
+            "explicitUsers": explicit_users,
+            "lowConfidenceReason": low_confidence_reason,
+        }
+
+    @staticmethod
+    def _flag_repeated_long_comment_bots(comments: List[Dict[str, Any]]) -> None:
+        text_counts = Counter(
+            str(comment.get("normalized_text") or comment.get("text") or "").strip().lower()
+            for comment in comments
+        )
+        for comment in comments:
+            normalized = str(comment.get("normalized_text") or comment.get("text") or "").strip().lower()
+            if len(normalized) >= 40 and text_counts.get(normalized, 0) >= 3:
+                comment["is_bot"] = True
+                comment["spam_score"] = max(int(comment.get("spam_score") or 0), 3)
+
     def get_snapshot_data(
         self,
         snapshot_id: str,
@@ -464,6 +634,7 @@ class AudienceAnalytics:
         # --- Step 3: feature extraction ---
         step_started = time.monotonic()
         extracted_comments = [self.extractor.extract_comment_features(comment) for comment in comments]
+        self._flag_repeated_long_comment_bots(extracted_comments)
         timings["feature_extraction_seconds"] = self._elapsed(step_started)
 
         if deadline_at is not None and time.monotonic() > deadline_at:
@@ -484,6 +655,24 @@ class AudienceAnalytics:
         all_slang: Counter = Counter()
         all_usernames: List[str] = []
         all_full_names: List[str] = []
+        explicit_city_counts: Counter = Counter()
+        explicit_country_counts: Counter = Counter()
+        gender_meta: Dict[str, Any] = {
+            "evidenceUsers": 0,
+            "lowConfidenceReason": "",
+        }
+        language_meta: Dict[str, Any] = {
+            "evidenceUsers": 0,
+            "lowConfidenceReason": "",
+        }
+        country_meta: Dict[str, Any] = {
+            "explicitUsers": 0,
+            "lowConfidenceReason": "",
+        }
+        city_meta: Dict[str, Any] = {
+            "explicitUsers": 0,
+            "lowConfidenceReason": "",
+        }
         age_metadata: Dict[str, Any] = {
             "confidence": 0.25,
             "method": "fallback demographics (no user predictions)",
@@ -516,27 +705,21 @@ class AudienceAnalytics:
                 self.use_ai = False
 
         if not self.use_ai:
-            gender_scores = Counter({"male": 0, "female": 0, "unknown": 0})
-            for comment in real_comments:
-                pred = self.predictor.predict_gender(
-                    comment.get("first_name"),
-                    comment.get("emoji_gender"),
-                    comment.get("gender_keywords"),
-                )
-                gender_scores["male"] += pred.get("male", 0)
-                gender_scores["female"] += pred.get("female", 0)
-                gender_scores["unknown"] += pred.get("unknown", 0)
+            gender_dist, gender_meta = self._aggregate_gender_distribution(real_comments)
 
-            total_gender = sum(gender_scores.values())
-            if total_gender > 0:
-                gender_dist = {k: round((v / total_gender) * 100, 1) for k, v in gender_scores.items()}
-
-            languages = [c.get("language") for c in extracted_comments if c.get("language")]
-            hours = [c.get("hour") for c in extracted_comments if c.get("hour") is not None]
+            languages = [c.get("language") for c in real_comments if c.get("language")]
+            hours = [c.get("hour") for c in real_comments if c.get("hour") is not None]
             all_slang = Counter()
-            for c in extracted_comments:
+            explicit_city_counts = Counter()
+            explicit_country_counts = Counter()
+            for c in real_comments:
                 for loc, score in c.get("location_slang", {}).items():
                     all_slang[loc] += score
+                for city, score in (c.get("city_mentions") or {}).items():
+                    explicit_city_counts[city] += score
+                    all_slang[city] += score * 3
+                for country, score in (c.get("country_mentions") or {}).items():
+                    explicit_country_counts[country] += score
 
             geotags = []
             for post in posts[: max(1, max_posts)]:
@@ -555,7 +738,7 @@ class AudienceAnalytics:
             else:
                 dominant_language = "en"
 
-            all_usernames = [c.get("username") for c in extracted_comments if c.get("username")]
+            all_usernames = [c.get("username") for c in real_comments if c.get("username")]
 
             try:
                 country_pred = self.predictor.predict_country(
@@ -565,13 +748,18 @@ class AudienceAnalytics:
                     hours=hours,
                     usernames=all_usernames,
                 )
-                country_dist = {k: round(v * 100, 1) for k, v in list(country_pred.items())[:5]}
+                predicted_country_dist = {k: round(v * 100, 1) for k, v in list(country_pred.items())[:5]}
+                country_dist, country_meta = self._merge_country_distribution(
+                    predicted_country_dist,
+                    explicit_country_counts,
+                    len(real_comments),
+                )
             except Exception:
                 country_dist = country_dist
 
             all_full_names = [
                 c.get("full_name")
-                for c in extracted_comments
+                for c in real_comments
                 if c.get("full_name") and str(c.get("full_name")).strip()
             ]
 
@@ -583,9 +771,13 @@ class AudienceAnalytics:
                     bio_text=profile.get("biography", ""),
                     usernames=all_usernames,
                     full_names=all_full_names,
-                    extracted_comments=extracted_comments,
+                    extracted_comments=real_comments,
                 )
-                city_dist = city_pred if isinstance(city_pred, dict) else {}
+                city_dist, city_meta = self._merge_city_distribution(
+                    city_pred if isinstance(city_pred, dict) else {},
+                    explicit_city_counts,
+                    len(real_comments),
+                )
             except Exception:
                 city_dist = {}
 
@@ -624,13 +816,7 @@ class AudienceAnalytics:
             }
 
             # Language distribution from extracted comments
-            lang_counter = Counter([c.get("language") for c in extracted_comments if c.get("language")])
-            total_langs = sum(lang_counter.values())
-            language_dist = (
-                {k: round((v / total_langs) * 100, 1) for k, v in lang_counter.most_common(5)}
-                if total_langs > 0
-                else {}
-            )
+            language_dist, language_meta = self._language_distribution_from_features(real_comments)
 
         timings["inference_seconds"] = self._elapsed(step_started)
 
@@ -666,7 +852,7 @@ class AudienceAnalytics:
             location_slang=all_slang,
             languages=languages,
         )
-        gender_low_confidence_reason = ""
+        gender_low_confidence_reason = gender_meta.get("lowConfidenceReason", "")
         if location_low_confidence_reason and real_user_count < MIN_DEMOGRAPHIC_SIGNAL_USERS:
             gender_dist = {"male": 0.0, "female": 0.0, "unknown": 100.0}
             country_dist = {}
@@ -729,13 +915,23 @@ class AudienceAnalytics:
                 },
                 "gender": {
                     "lowConfidenceReason": gender_low_confidence_reason,
+                    "evidenceUsers": gender_meta.get("evidenceUsers", 0),
+                },
+                "language": {
+                    "lowConfidenceReason": language_meta.get("lowConfidenceReason", ""),
+                    "evidenceUsers": language_meta.get("evidenceUsers", 0),
+                },
+                "country": {
+                    "lowConfidenceReason": country_meta.get("lowConfidenceReason", ""),
+                    "explicitUsers": country_meta.get("explicitUsers", 0),
                 },
                 "location": {
-                    "lowConfidenceReason": location_low_confidence_reason,
+                    "lowConfidenceReason": location_low_confidence_reason or city_meta.get("lowConfidenceReason", ""),
                     "geotagCount": len(geotags),
                     "locationSlangSignalCount": sum(
                         score for score in all_slang.values() if score > 0
                     ),
+                    "explicitCityUsers": city_meta.get("explicitUsers", 0),
                 },
             },
             "audience_quality_score": aq_score,

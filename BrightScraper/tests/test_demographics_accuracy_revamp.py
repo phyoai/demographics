@@ -9,6 +9,8 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from BrightScraper.audience_analytics import AGE_BUCKETS, AudienceAnalytics
+from BrightScraper.utils.feature_extractor import FeatureExtractor
+from BrightScraper.utils.ml_predictor import AudiencePredictor
 
 
 class _ExtractorStub:
@@ -124,6 +126,93 @@ class DemographicsAccuracyRevampTests(unittest.TestCase):
         self.assertAlmostEqual(sum(age_dist.values()), 100.0, places=1)
         self.assertTrue(any(value > 0.0 for value in age_dist.values()))
         self.assertTrue(result["demographics_meta"]["age"]["lowConfidenceReason"])
+
+    def test_feature_extractor_promotes_name_language_and_geo_signals(self):
+        extractor = FeatureExtractor()
+
+        features = extractor.extract_comment_features(
+            {
+                "username": "priya_sharma_99",
+                "full_name": "Priya Sharma",
+                "text": "Bhai main Delhi India se hoon",
+            }
+        )
+
+        self.assertEqual(features["first_name"], "priya")
+        self.assertEqual(features["last_name"], "sharma")
+        self.assertEqual(features["name_source"], "full_name")
+        self.assertGreaterEqual(features["name_confidence"], 0.9)
+        self.assertEqual(features["language"], "hi")
+        self.assertIn("Delhi", features["city_mentions"])
+        self.assertIn("India", features["country_mentions"])
+        self.assertGreater(features["gender_signal_strength"], 0.9)
+
+    def test_gender_keywords_ignore_creator_address_terms(self):
+        extractor = FeatureExtractor()
+
+        features = extractor.extract_comment_features(
+            {
+                "username": "random_user_123",
+                "text": "bhai bro sir this is useful",
+            }
+        )
+
+        self.assertEqual(features["gender_keywords"], {"male": 0, "female": 0})
+
+    def test_gender_predictor_does_not_default_unknown_names_to_male(self):
+        predictor = AudiencePredictor()
+
+        prediction = predictor.predict_gender(
+            first_name=None,
+            emoji_gender={"male": 0, "female": 0},
+            gender_keywords={"male": 0, "female": 0},
+        )
+
+        self.assertGreaterEqual(prediction["unknown"], 0.95)
+        self.assertLessEqual(prediction["male"], 0.05)
+
+    def test_gender_predictor_uses_female_names_from_usernames(self):
+        predictor = AudiencePredictor()
+        female_names = ["priya", "vaishali", "smita", "khushburohila", "bhavanasharma"]
+        male_total = 0.0
+        female_total = 0.0
+
+        for name in female_names:
+            prediction = predictor.predict_gender(
+                first_name=name,
+                emoji_gender={"male": 0, "female": 0},
+                gender_keywords={"male": 0, "female": 0},
+            )
+            male_total += prediction["male"]
+            female_total += prediction["female"]
+
+        self.assertGreater(female_total, male_total)
+
+    def test_explicit_comment_locations_boost_city_and_country_distribution(self):
+        analytics = _build_analytics(age_confidence=0.8)
+        analytics.extractor = FeatureExtractor()
+
+        def _location_comments(self, posts, max_posts=8, followers=0, retry_summary=None, deadline_at=None, fast_mode=False):
+            comments = []
+            for idx in range(40):
+                comments.append(
+                    {
+                        "username": f"priya_sharma_{idx}",
+                        "full_name": "Priya Sharma",
+                        "text": "Bhai main Surat Gujarat India se hoon",
+                        "is_bot": False,
+                    }
+                )
+            return comments, {"status": "success", "warnings": [], "posts_scraped": 2, "target_comments": 40}
+
+        analytics.scrape_all_comments = types.MethodType(_location_comments, analytics)
+        result = analytics.analyze_audience("demo_user", max_posts=8, fast_mode=False, deadline_seconds=30)
+
+        self.assertIn("Surat", result["city_distribution"])
+        self.assertGreater(result["city_distribution"]["Surat"], 90.0)
+        self.assertIn("India", result["country_distribution"])
+        self.assertGreater(result["country_distribution"]["India"], 35.0)
+        self.assertEqual(result["language_distribution"].get("hi"), 100.0)
 
     def test_low_confidence_gating_returns_unknown_or_empty_demographics(self):
         analytics = _build_analytics(age_confidence=0.22)
